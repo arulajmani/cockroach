@@ -1757,6 +1757,10 @@ func (m *sessionDataMutator) SetDatabase(dbName string) {
 	m.data.Database = dbName
 }
 
+func (m *sessionDataMutator) SetTemporarySchemaName(scName string) {
+	m.data.SearchPath.UpdateTemporarySchemaName(scName)
+}
+
 func (m *sessionDataMutator) SetDefaultIntSize(size int) {
 	m.data.DefaultIntSize = size
 }
@@ -1805,8 +1809,8 @@ func (m *sessionDataMutator) SetSafeUpdates(val bool) {
 	m.data.SafeUpdates = val
 }
 
-func (m *sessionDataMutator) SetSearchPath(val sessiondata.SearchPath) {
-	m.data.SearchPath = val
+func (m *sessionDataMutator) UpdateSearchPath(paths []string) {
+	m.data.SearchPath.UpdatePaths(paths)
 }
 
 func (m *sessionDataMutator) SetLocation(loc *time.Location) {
