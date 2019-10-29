@@ -64,7 +64,7 @@ type createTableRun struct {
 
 func (n *createTableNode) startExec(params runParams) error {
 	temporary := false
-	tKey := sqlbase.NewPublicTableKey(n.dbDesc.ID, n.n.Table.Table())
+	tKey := sqlbase.NewPublicTableKey(n.dbDesc.ID, n.n.Table.Table(), params.ExecCfg().Settings)
 
 	// pg_temp schema name is merely an alias for a temporary table. If the table
 	// name is qualified under pg_temp, even without the TEMP/TEMPORARY keyword,
@@ -93,7 +93,7 @@ func (n *createTableNode) startExec(params runParams) error {
 			}
 		}
 
-		tKey = sqlbase.NewTableKey(n.dbDesc.ID, schemaID, n.n.Table.Table())
+		tKey = sqlbase.NewTableKey(n.dbDesc.ID, schemaID, n.n.Table.Table(), params.ExecCfg().Settings)
 		temporary = true
 	}
 	key := tKey.Key()

@@ -142,7 +142,7 @@ func (ms MetadataSchema) GetInitialValues() ([]roachpb.KeyValue, []roachpb.RKey)
 		value.SetInt(int64(desc.GetID()))
 		if parentID != keys.RootNamespaceID {
 			ret = append(ret, roachpb.KeyValue{
-				Key:   NewPublicTableKey(parentID, desc.GetName()).Key(),
+				Key:   NewPublicTableKey(parentID, desc.GetName(), nil /* settings */).Key(),
 				Value: value,
 			})
 		} else {
@@ -153,7 +153,7 @@ func (ms MetadataSchema) GetInitialValues() ([]roachpb.KeyValue, []roachpb.RKey)
 			ret = append(
 				ret,
 				roachpb.KeyValue{
-					Key:   NewDatabaseKey(desc.GetName()).Key(),
+					Key:   NewDatabaseKey(desc.GetName(), nil /* settings */).Key(),
 					Value: value,
 				},
 				roachpb.KeyValue{
@@ -161,6 +161,16 @@ func (ms MetadataSchema) GetInitialValues() ([]roachpb.KeyValue, []roachpb.RKey)
 					Value: publicSchemaValue,
 				})
 		}
+
+		// This function is called during bootstrapping, and the cluster settings are populated later.
+		// There is no way to ascertain what the cluster version is at this point. So, we populate both
+		// the older system.namespace (< 20.1) and the newer system.namespace (>= 20.1)
+		deprecatedValue := roachpb.Value{}
+		deprecatedValue.SetInt(int64(desc.GetID()))
+		ret = append(ret, roachpb.KeyValue{
+			Key:   NewDeprecatedTableKey(parentID, desc.GetName()).Key(),
+			Value: deprecatedValue,
+		})
 
 		// Create descriptor metadata key.
 		value = roachpb.Value{}

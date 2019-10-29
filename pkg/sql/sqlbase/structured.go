@@ -3777,17 +3777,18 @@ func (desc *ImmutableTableDescriptor) TableDesc() *TableDescriptor {
 
 // DatabaseKey implements DescriptorKey.
 type DatabaseKey struct {
-	name string
+	name     string
+	settings *cluster.Settings
 }
 
 // NewDatabaseKey returns a new DatabaseKey.
-func NewDatabaseKey(name string) DatabaseKey {
-	return DatabaseKey{name}
+func NewDatabaseKey(name string, settings *cluster.Settings) DatabaseKey {
+	return DatabaseKey{name: name, settings: settings}
 }
 
 // Key implements DescriptorKey interface.
 func (dk DatabaseKey) Key() roachpb.Key {
-	return MakeNameMetadataKey(keys.RootNamespaceID, keys.RootNamespaceID, dk.name)
+	return MakeNameMetadataKey(keys.RootNamespaceID, keys.RootNamespaceID, dk.name, dk.settings)
 }
 
 // Name implements DescriptorKey interface.
@@ -3800,21 +3801,22 @@ type TableKey struct {
 	parentID       ID
 	parentSchemaID ID
 	name           string
+	settings       *cluster.Settings
 }
 
 // NewPublicTableKey returns a new TableKey.
-func NewPublicTableKey(parentID ID, name string) TableKey {
-	return TableKey{parentID: parentID, parentSchemaID: keys.PublicSchemaID, name: name}
+func NewPublicTableKey(parentID ID, name string, settings *cluster.Settings) TableKey {
+	return TableKey{parentID: parentID, parentSchemaID: keys.PublicSchemaID, name: name, settings: settings}
 }
 
 // NewTableKey returns a new TableKey
-func NewTableKey(parentID ID, parentSchemaID ID, name string) TableKey {
-	return TableKey{parentID: parentID, parentSchemaID: parentSchemaID, name: name}
+func NewTableKey(parentID ID, parentSchemaID ID, name string, settings *cluster.Settings) TableKey {
+	return TableKey{parentID: parentID, parentSchemaID: parentSchemaID, name: name, settings: settings}
 }
 
 // Key implements DescriptorKey interface.
 func (tk TableKey) Key() roachpb.Key {
-	return MakeNameMetadataKey(tk.parentID, tk.parentSchemaID, tk.name)
+	return MakeNameMetadataKey(tk.parentID, tk.parentSchemaID, tk.name, tk.settings)
 }
 
 // Name implements DescriptorKey interface.
@@ -3829,12 +3831,16 @@ type SchemaKey struct {
 }
 
 func NewSchemaKey(parentID ID, name string) SchemaKey {
-	return SchemaKey{parentID, name}
+	return SchemaKey{parentID: parentID, name: name}
+}
+
+func NewPublicSchemaKey(parentID ID) SchemaKey {
+	return SchemaKey{parentID: parentID, name: tree.PublicSchema}
 }
 
 // Key implements DescriptorKey interface.
 func (sk SchemaKey) Key() roachpb.Key {
-	return MakeNameMetadataKey(sk.parentID, keys.RootNamespaceID, sk.name)
+	return MakeNameMetadataKey(sk.parentID, keys.RootNamespaceID, sk.name, nil)
 }
 
 // Name implements DescriptorKey interface.
@@ -3842,21 +3848,41 @@ func (sk SchemaKey) Name() string {
 	return sk.name
 }
 
-// PublicSchemaKey implements DescriptorKey interface.
-type PublicSchemaKey struct {
+// DeprecatedTableKey implements DescriptorKey interface.
+type DeprecatedTableKey struct {
 	parentID ID
+	name     string
 }
 
-func NewPublicSchemaKey(parentID ID) PublicSchemaKey {
-	return PublicSchemaKey{parentID}
+func NewDeprecatedTableKey(parentID ID, name string) DeprecatedTableKey {
+	return DeprecatedTableKey{parentID, name}
 }
 
 // Key implements DescriptorKey interface.
-func (psk PublicSchemaKey) Key() roachpb.Key {
-	return MakeNameMetadataKey(psk.parentID, keys.RootNamespaceID, tree.PublicSchema)
+func (dtk DeprecatedTableKey) Key() roachpb.Key {
+	return MakeDeprecatedNameMetadataKey(dtk.parentID, dtk.name)
 }
 
 // Name implements DescriptorKey interface.
-func (psk PublicSchemaKey) Name() string {
-	return tree.PublicSchema
+func (dtk DeprecatedTableKey) Name() string {
+	return dtk.name
+}
+
+// DeprecatedDatabaseKey implements DescriptorKey interface.
+type DeprecatedDatabaseKey struct {
+	name string
+}
+
+func NewDeprecatedDatabaseKey(name string) DeprecatedDatabaseKey {
+	return DeprecatedDatabaseKey{name: name}
+}
+
+// Key implements DescriptorKey interface.
+func (ddk DeprecatedDatabaseKey) Key() roachpb.Key {
+	return MakeDeprecatedNameMetadataKey(keys.RootNamespaceID, ddk.name)
+}
+
+// Name implements DescriptorKey interface.
+func (ddk DeprecatedDatabaseKey) Name() string {
+	return ddk.name
 }

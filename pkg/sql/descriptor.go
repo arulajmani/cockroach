@@ -60,7 +60,7 @@ func GenerateUniqueDescID(ctx context.Context, db *client.DB) (sqlbase.ID, error
 func (p *planner) createDatabase(
 	ctx context.Context, desc *sqlbase.DatabaseDescriptor, ifNotExists bool,
 ) (bool, error) {
-	plainKey := sqlbase.NewDatabaseKey(desc.Name)
+	plainKey := sqlbase.NewDatabaseKey(desc.Name, p.ExecCfg().Settings)
 	idKey := plainKey.Key()
 
 	if exists, err := descExists(ctx, p.txn, idKey); err == nil && exists {
@@ -241,9 +241,11 @@ func GetAllDescriptors(ctx context.Context, txn *client.Txn) ([]sqlbase.Descript
 
 // GetAllDatabaseDescriptorIDs looks up and returns all available database
 // descriptor IDs.
-func GetAllDatabaseDescriptorIDs(ctx context.Context, txn *client.Txn) ([]sqlbase.ID, error) {
+func GetAllDatabaseDescriptorIDs(
+	ctx context.Context, txn *client.Txn, settings *cluster.Settings,
+) ([]sqlbase.ID, error) {
 	log.Eventf(ctx, "fetching all database descriptor IDs")
-	nameKey := sqlbase.NewDatabaseKey("" /* name */).Key()
+	nameKey := sqlbase.NewDatabaseKey("" /* name */, settings).Key()
 	kvs, err := txn.Scan(ctx, nameKey, nameKey.PrefixEnd(), 0 /*maxRows */)
 	if err != nil {
 		return nil, err
