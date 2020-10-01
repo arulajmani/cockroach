@@ -13,10 +13,10 @@ package sql
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"runtime/pprof"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/kv"
@@ -1461,13 +1461,22 @@ func (ex *connExecutor) recordTransaction(ev txnEvent, implicit bool, txnStart t
 
 	// First we go through all the statements in the transaction and hash their
 	// queries to get their IDs.
-	h := fnv.New128()
+	s0 := uint64(14695981039346656037)
 	for _, stmtID := range ex.extraTxnState.transactionStatementIDs {
 		// Add the current statementID to the running hash state we've been
 		// accumulating.
-		h.Write([]byte(stmtID))
+		for _, c := range stmtID {
+			s0 *= 1099511628211
+			s0 ^= uint64(c)
+		}
 	}
-	key := txnKey(fmt.Sprintf("%x", h.Sum(nil)))
+	b := make([]byte, 16)
+	const hex = "0123456789abcdef"
+	for i := 0; i < 16; i++ {
+		b[i] = hex[s0&0xf]
+		s0 = s0 >> 4
+	}
+	key := txnKey(*(*string)(unsafe.Pointer(&b)))
 
 	txnServiceLat := ex.phaseTimes.getTransactionServiceLatency()
 	txnRetryLat := ex.phaseTimes.getTransactionRetryLatency()

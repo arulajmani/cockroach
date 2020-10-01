@@ -11,9 +11,8 @@
 package roachpb
 
 import (
-	"fmt"
-	"hash/fnv"
 	"math"
+	"unsafe"
 
 	"github.com/cockroachdb/errors"
 )
@@ -26,15 +25,37 @@ type StmtID string
 // these are the axis' we use to bucket queries for stats collection
 // (see stmtKey).
 func ConstructStatementID(anonymizedStmt string, failed bool, implicitTxn bool) StmtID {
-	h := fnv.New128()
-	h.Write([]byte(anonymizedStmt))
+	// Magic constants as suitable for a FNV-64 hash.
+	s0 := uint64(14695981039346656037)
+
+	for _, c := range anonymizedStmt {
+		// These two assignments as well as those below should be moved to
+		// a helper function to share the code.
+		s0 *= 1099511628211
+		s0 ^= uint64(c)
+	}
+
 	if failed {
-		h.Write([]byte("failed"))
+		s0 *= 1099511628211
+		s0 ^= uint64('F')
+	} else {
+		s0 *= 1099511628211
+		s0 ^= uint64('S')
 	}
 	if implicitTxn {
-		h.Write([]byte("implicit_txn"))
+		s0 *= 1099511628211
+		s0 ^= uint64('I')
+	} else {
+		s0 *= 1099511628211
+		s0 ^= uint64('E')
 	}
-	return StmtID(fmt.Sprintf("%x", h.Sum(nil)))
+	b := make([]byte, 16)
+	const hex = "0123456789abcdef"
+	for i := 0; i < 16; i++ {
+		b[i] = hex[s0&0xf]
+		s0 = s0 >> 4
+	}
+	return StmtID(*(*string)(unsafe.Pointer(&b)))
 }
 
 // GetVariance retrieves the variance of the values.
