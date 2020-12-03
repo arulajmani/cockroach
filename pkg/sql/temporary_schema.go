@@ -492,11 +492,9 @@ func (c *TemporaryObjectCleaner) doTemporaryObjectCleanup(
 	defer c.metrics.ActiveCleaners.Dec(1)
 
 	log.Infof(ctx, "running temporary object cleanup background job")
-	txn := kv.NewTxn(ctx, c.db, 0)
 
-	// Build a set of all session IDs with temporary objects.
 	var dbIDs []descpb.ID
-	if err := retryFunc(ctx, func() error {
+	if err := c.db.Txn(ctx, func(ctx context.Context, txn *kv.Txn) error {
 		var err error
 		dbIDs, err = catalogkv.GetAllDatabaseDescriptorIDs(ctx, txn, c.codec)
 		return err
@@ -507,7 +505,7 @@ func (c *TemporaryObjectCleaner) doTemporaryObjectCleanup(
 	sessionIDs := make(map[ClusterWideID]struct{})
 	for _, dbID := range dbIDs {
 		var schemaNames map[descpb.ID]string
-		if err := retryFunc(ctx, func() error {
+		if err := c.db.Txn(ctx, func(ctx context.Context, txn *kv.Txn) error {
 			var err error
 			schemaNames, err = resolver.GetForDatabase(ctx, txn, c.codec, dbID)
 			return err
@@ -559,17 +557,15 @@ func (c *TemporaryObjectCleaner) doTemporaryObjectCleanup(
 
 			// Reset the session data with the appropriate sessionID such that we can resolve
 			// the given schema correctly.
-			if err := retryFunc(ctx, func() error {
-				return cleanupSessionTempObjects(
-					ctx,
-					c.settings,
-					c.leaseMgr,
-					c.db,
-					c.codec,
-					ie,
-					sessionID,
-				)
-			}); err != nil {
+			if err := cleanupSessionTempObjects(
+				ctx,
+				c.settings,
+				c.leaseMgr,
+				c.db,
+				c.codec,
+				ie,
+				sessionID,
+			); err != nil {
 				// Log error but continue trying to delete the rest.
 				log.Warningf(ctx, "failed to clean temp objects under session %q: %v", sessionID, err)
 				c.metrics.SchemasDeletionError.Inc(1)
