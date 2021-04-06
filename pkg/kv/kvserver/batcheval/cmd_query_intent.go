@@ -12,6 +12,7 @@ package batcheval
 
 import (
 	"context"
+	"runtime/debug"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/batcheval/result"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/spanset"
@@ -129,6 +130,7 @@ func QueryIntent(
 			// return a TransactionRetryError immediately with an updated
 			// transaction proto. This is an optimization that can help
 			// the txn use refresh spans more effectively.
+			log.Infof(ctx, "!!!!!!!! %s", debug.Stack())
 			return result.Result{}, roachpb.NewTransactionRetryError(roachpb.RETRY_SERIALIZABLE, "intent pushed")
 		}
 		return result.Result{}, roachpb.NewIntentMissingError(args.Key, intent)
