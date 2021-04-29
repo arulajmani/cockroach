@@ -1795,6 +1795,7 @@ func (ds *DistSender) sendToReplicas(
 
 	// Try the leaseholder first, if the request wants it.
 	sendToLeaseholder := (leaseholder != nil) && !canFollowerRead && ba.RequiresLeaseHolder()
+	log.Infof(ctx, "!!!!!!!!! sending to leaseholder? %v", sendToLeaseholder)
 	if sendToLeaseholder {
 		idx := replicas.Find(leaseholder.ReplicaID)
 		if idx != -1 {
