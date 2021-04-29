@@ -16,7 +16,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
-	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
+	"github.com/cockroachdb/cockroach/pkg/testutils/testcluster"
 	"github.com/cockroachdb/errors"
 )
 
@@ -24,8 +24,12 @@ import (
 // of nodes and the provided testing knobs applied to each of the nodes. Every
 // node is placed in its own locality, named "us-east1", "us-east2", and so on.
 func TestingCreateMultiRegionCluster(
-	t *testing.T, numServers int, knobs base.TestingKnobs, baseDir *string,
-) (serverutils.TestClusterInterface, *gosql.DB, func()) {
+	t *testing.T,
+	numServers int,
+	knobs base.TestingKnobs,
+	baseDir *string,
+	replicationMode base.TestClusterReplicationMode,
+) (*testcluster.TestCluster, *gosql.DB, func()) {
 	serverArgs := make(map[int]base.TestServerArgs)
 	regionNames := make([]string, numServers)
 	for i := 0; i < numServers; i++ {
@@ -48,7 +52,8 @@ func TestingCreateMultiRegionCluster(
 		}
 	}
 
-	tc := serverutils.StartNewTestCluster(t, numServers, base.TestClusterArgs{
+	tc := testcluster.StartTestCluster(t, numServers, base.TestClusterArgs{
+		ReplicationMode:   replicationMode,
 		ServerArgsPerNode: serverArgs,
 	})
 

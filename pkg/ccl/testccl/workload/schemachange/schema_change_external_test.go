@@ -47,6 +47,7 @@ func TestWorkload(t *testing.T) {
 		3, /* numServers */
 		base.TestingKnobs{},
 		&dir,
+		base.ReplicationAuto,
 	)
 	defer cleanup()
 
