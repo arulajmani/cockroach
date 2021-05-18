@@ -212,6 +212,9 @@ func (rs ReplicaSlice) OptimizeReplicaOrder(
 		if rs[i].NodeID == nodeDesc.NodeID {
 			return true
 		}
+		if rs[j].NodeID == nodeDesc.NodeID {
+			return false
+		}
 		if latencyFn != nil {
 			latencyI, okI := latencyFn(rs[i].addr())
 			latencyJ, okJ := latencyFn(rs[j].addr())

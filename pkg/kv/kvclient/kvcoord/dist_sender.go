@@ -1822,7 +1822,7 @@ func (ds *DistSender) sendToReplicas(
 		if lastErr == nil && br != nil {
 			lastErr = br.Error.GoError()
 		}
-		err = skipStaleReplicas(transport, routing, ambiguousError, lastErr)
+		err = skipStaleReplicas(ctx, transport, routing, ambiguousError, lastErr)
 		if err != nil {
 			return nil, err
 		}
@@ -2082,7 +2082,11 @@ func (ds *DistSender) maybeIncrementErrCounters(br *roachpb.BatchResponse, err e
 //
 // Returns an error if the transport is exhausted.
 func skipStaleReplicas(
-	transport Transport, routing rangecache.EvictionToken, ambiguousError error, lastErr error,
+	ctx context.Context,
+	transport Transport,
+	routing rangecache.EvictionToken,
+	ambiguousError error,
+	lastErr error,
 ) error {
 	// Check whether the range cache told us that the routing info we had is
 	// very out-of-date. If so, there's not much point in trying the other
@@ -2103,6 +2107,7 @@ func skipStaleReplicas(
 		if _, ok := routing.Desc().GetReplicaDescriptorByID(transport.NextReplica().ReplicaID); ok {
 			return nil
 		}
+		log.VEventf(ctx, 2, "r: skipping replica %v", transport.NextReplica().ReplicaID)
 		transport.SkipReplica()
 	}
 }
