@@ -115,6 +115,11 @@ const (
 // ColumnID is a custom type for ColumnDescriptor IDs.
 type ColumnID tree.ColumnID
 
+// TODO(arul): this is just to break a dependency cycle between descpb and
+// zonepb for now, this doesn't belong here.
+// ZoneConfigID is a custom type for ZoneConfiguration IDs.
+type ZoneConfigID uint32
+
 // SafeValue implements the redact.SafeValue interface.
 func (ColumnID) SafeValue() {}
 

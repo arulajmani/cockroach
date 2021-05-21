@@ -26,6 +26,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/server/serverpb"
 	"github.com/cockroachdb/cockroach/pkg/server/telemetry"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
+	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catalogkv"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
@@ -763,12 +764,86 @@ func (n *setZoneConfigNode) startExec(params runParams) error {
 		hasNewSubzones := !deleteZone && index != nil
 		execConfig := params.extendedEvalCtx.ExecCfg
 		zoneToWrite := partialZone
+
+		needsDescriptorUpdate := false
+		if zoneToWrite.ID == 0 {
+			// Generate a stable ID for this zone config.
+			id, err := catalogkv.GenerateUniqueZoneConfigID(
+				params.ctx, params.ExecCfg().DB, params.ExecCfg().Codec,
+			)
+			if err != nil {
+				return err
+			}
+			zoneToWrite.ID = zonepb.ZoneConfigID(id)
+			needsDescriptorUpdate = true
+
+			if table != nil {
+				tbDesc, err := params.p.Descriptors().GetMutableTableByID(params.ctx, params.p.txn, targetID, tree.ObjectLookupFlags{})
+				if err != nil {
+					return err
+				}
+				// TODO(arul): This thing should be an immutable database descriptor
+				// and GetZoneConfigID should be a method on the interface.
+				found, dbDesc, err := params.p.Descriptors().GetMutableDatabaseByID(
+					params.ctx, params.p.txn, tbDesc.ParentID, tree.DatabaseLookupFlags{
+						AvoidCached: true,
+					})
+				if err != nil {
+					return err
+				}
+				if !found {
+					return errors.Newf("!!!!!! didn't find db id %d", targetID)
+				}
+				_ = dbDesc
+				zoneToWrite.ParentID = zonepb.ZoneConfigID(dbDesc.ZoneConfigID)
+			}
+		}
 		// TODO(ajwerner): This is extremely fragile because we accept a nil table
 		// all the way down here.
 		n.run.numAffected, err = writeZoneConfig(params.ctx, params.p.txn,
 			targetID, table, zoneToWrite, execConfig, hasNewSubzones)
 		if err != nil {
 			return err
+		}
+
+		if needsDescriptorUpdate {
+			// Generate a stable ID for this zone config.
+			id := zoneToWrite.ID
+
+			if targetID == 0 {
+				// TODO(arul): Whats this targetID = 0 stuff all about?
+			} else if table == nil {
+				found, dbDesc, err := params.p.Descriptors().GetMutableDatabaseByID(
+					params.ctx, params.p.txn, targetID, tree.DatabaseLookupFlags{
+						AvoidCached: true,
+					})
+				if err != nil {
+					return err
+				}
+				if !found {
+					//return errors.Newf("didn't find db id, wtf? %d", targetID)
+				} else {
+
+					dbDesc.ZoneConfigID = descpb.ZoneConfigID(id)
+
+					err = params.p.Descriptors().WriteDesc(params.ctx, false /* kvTrace */, dbDesc, params.p.txn)
+					if err != nil {
+						return err
+					}
+				}
+
+			} else {
+				tbDesc, err := params.p.Descriptors().GetMutableTableByID(params.ctx, params.p.txn, targetID, tree.ObjectLookupFlags{})
+				if err != nil {
+					return err
+				}
+				tbDesc.ZoneConfigID = descpb.ZoneConfigID(id)
+
+				err = params.p.Descriptors().WriteDesc(params.ctx, false /* kvTrace */, tbDesc, params.p.txn)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		// Record that the change has occurred for auditing.
@@ -976,8 +1051,14 @@ func writeZoneConfig(
 		return 0, pgerror.Newf(pgcode.CheckViolation,
 			"could not marshal zone config: %v", err)
 	}
-	return execCfg.InternalExecutor.Exec(ctx, "update-zone", txn,
+	_, err = execCfg.InternalExecutor.Exec(ctx, "update-zone", txn,
 		"UPSERT INTO system.zones (id, config) VALUES ($1, $2)", targetID, buf)
+	if err != nil {
+		return 0, err
+	}
+	return execCfg.InternalExecutor.Exec(ctx, "update-zone-configs-table", txn,
+		"UPSERT INTO system.zone_configs (id, parent_id, config) VALUES ($1, $2, $3)",
+		zone.ID, zone.ParentID, buf)
 }
 
 // getZoneConfigRaw looks up the zone config with the given ID. Unlike

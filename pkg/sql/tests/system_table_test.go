@@ -169,6 +169,7 @@ func TestSystemTableLiterals(t *testing.T) {
 		{keys.DescriptorTableID, systemschema.DescriptorTableSchema, systemschema.DescriptorTable},
 		{keys.UsersTableID, systemschema.UsersTableSchema, systemschema.UsersTable},
 		{keys.ZonesTableID, systemschema.ZonesTableSchema, systemschema.ZonesTable},
+		{keys.ZoneConfigsTableID, systemschema.ZoneConfigsTableSchema, systemschema.ZoneConfigsTable},
 		{keys.LeaseTableID, systemschema.LeaseTableSchema, systemschema.LeaseTable},
 		{keys.EventLogTableID, systemschema.EventLogTableSchema, systemschema.EventLogTable},
 		{keys.RangeEventTableID, systemschema.RangeEventTableSchema, systemschema.RangeEventTable},

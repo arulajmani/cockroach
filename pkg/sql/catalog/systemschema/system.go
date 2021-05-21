@@ -96,6 +96,14 @@ CREATE TABLE system.zones (
   config BYTES
 );`
 
+	// Zone settings per DB/Table.
+	ZoneConfigsTableSchema = `
+CREATE TABLE system.zone_configs (
+  id     INT8 PRIMARY KEY,
+  parent_id     INT8 NOT NULL,
+  config BYTES
+);`
+
 	SettingsTableSchema = `
 CREATE TABLE system.settings (
 	name              STRING    NOT NULL PRIMARY KEY,
@@ -590,6 +598,43 @@ var (
 		NextIndexID:  2,
 		Privileges: descpb.NewCustomSuperuserPrivilegeDescriptor(
 			descpb.SystemAllowedPrivileges[keys.ZonesTableID], security.NodeUserName()),
+		FormatVersion:  descpb.InterleavedFormatVersion,
+		NextMutationID: 1,
+	})
+
+	// ZoneConfigsTable is the descriptor for the new zones table which is keyed
+	// using the zone config ID.
+	ZoneConfigsTable = makeTable(descpb.TableDescriptor{
+		Name:                    "zone_configs",
+		ID:                      keys.ZoneConfigsTableID,
+		ParentID:                keys.SystemDatabaseID,
+		UnexposedParentSchemaID: keys.PublicSchemaID,
+		Version:                 1,
+		Columns: []descpb.ColumnDescriptor{
+			{Name: "id", ID: 1, Type: types.Int},
+			{Name: "parent_id", ID: 2, Type: types.Int},
+			{Name: "config", ID: 3, Type: types.Bytes, Nullable: true},
+		},
+		NextColumnID: 4,
+		Families: []descpb.ColumnFamilyDescriptor{
+			{Name: "primary", ID: 0, ColumnNames: []string{"id"}, ColumnIDs: singleID1},
+			{Name: "fam_2_parent_id", ID: 2, ColumnNames: []string{"parent_id"}, ColumnIDs: []descpb.ColumnID{2}, DefaultColumnID: 2},
+			{Name: "fam_3_config", ID: 3, ColumnNames: []string{"config"}, ColumnIDs: []descpb.ColumnID{3}, DefaultColumnID: 3},
+		},
+		PrimaryIndex: descpb.IndexDescriptor{
+			Name:             "primary",
+			ID:               keys.ZonesTablePrimaryIndexID,
+			Unique:           true,
+			ColumnNames:      []string{"id"},
+			ColumnDirections: singleASC,
+			// TODO(arul): fix these constants.
+			ColumnIDs: []descpb.ColumnID{keys.ZonesTablePrimaryIndexID},
+			Version:   descpb.StrictIndexColumnIDGuaranteesVersion,
+		},
+		NextFamilyID: 4,
+		NextIndexID:  2,
+		Privileges: descpb.NewCustomSuperuserPrivilegeDescriptor(
+			descpb.SystemAllowedPrivileges[keys.ZoneConfigsTableID], security.NodeUserName()),
 		FormatVersion:  descpb.InterleavedFormatVersion,
 		NextMutationID: 1,
 	})
