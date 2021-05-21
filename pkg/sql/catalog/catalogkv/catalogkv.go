@@ -48,6 +48,17 @@ func GenerateUniqueDescID(ctx context.Context, db *kv.DB, codec keys.SQLCodec) (
 	return descpb.ID(newVal - 1), nil
 }
 
+func GenerateUniqueZoneConfigID(
+	ctx context.Context, db *kv.DB, codec keys.SQLCodec,
+) (descpb.ZoneConfigID, error) {
+	// Increment unique descriptor counter.
+	newVal, err := kv.IncrementValRetryable(ctx, db, codec.ZoneConfigIDKey(), 1)
+	if err != nil {
+		return 0, err
+	}
+	return descpb.ZoneConfigID(newVal - 1), nil
+}
+
 // GetDescriptorID looks up the ID for plainKey.
 // InvalidID is returned if the name cannot be resolved.
 func GetDescriptorID(

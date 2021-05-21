@@ -19,11 +19,14 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/cat"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/errors"
 	"github.com/gogo/protobuf/proto"
 )
+
+type ZoneConfigID descpb.ID
 
 // Several ranges outside of the SQL keyspace are given special names so they
 // can be targeted by zone configs.

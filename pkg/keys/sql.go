@@ -151,6 +151,11 @@ func (e sqlEncoder) DescIDSequenceKey() roachpb.Key {
 	return e.SequenceKey(DescIDSequenceID)
 }
 
+func (e sqlEncoder) ZoneConfigIDKey() roachpb.Key {
+	// TODO(arul): make this a per-tenant thing.
+	return zoneIDGenerator
+}
+
 // ZoneKeyPrefix returns the key prefix for id's row in the system.zones table.
 func (e sqlEncoder) ZoneKeyPrefix(id uint32) roachpb.Key {
 	if !e.ForSystemTenant() {

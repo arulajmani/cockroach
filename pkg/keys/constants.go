@@ -260,6 +260,8 @@ var (
 	// table and namespace IDs for the system tenant. All other tenants use a
 	// SQL sequence for this purpose. See sqlEncoder.DescIDSequenceKey.
 	descIDGenerator = roachpb.Key(makeKey(SystemPrefix, roachpb.RKey("desc-idgen")))
+	// TODO(arul): move this into the tenant
+	zoneIDGenerator = roachpb.Key(makeKey(SystemPrefix, roachpb.RKey("desc-idgen")))
 	// NodeIDGenerator is the global node ID generator sequence.
 	NodeIDGenerator = roachpb.Key(makeKey(SystemPrefix, roachpb.RKey("node-idgen")))
 	// RangeIDGenerator is the global range ID generator sequence.
@@ -404,6 +406,7 @@ const (
 	SqllivenessID                       = 39
 	MigrationsID                        = 40
 	JoinTokensTableID                   = 41
+	ZoneConfigsTableID                  = 42
 
 	// CommentType is type for system.comments
 	DatabaseCommentType = 0
