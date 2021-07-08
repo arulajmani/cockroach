@@ -4889,6 +4889,7 @@ func sendWithTxn(
 // Regression test for #52517.
 func TestStoreBlockTransferLeaseRequestAfterSubsumption(t *testing.T) {
 	defer leaktest.AfterTest(t)()
+	skip.WithIssue(t, 67346, "flaky test")
 	defer log.Scope(t).Close(t)
 
 	ctx := context.Background()
