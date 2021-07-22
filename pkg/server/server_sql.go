@@ -48,6 +48,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/server/status"
 	"github.com/cockroachdb/cockroach/pkg/spanconfig"
 	"github.com/cockroachdb/cockroach/pkg/spanconfig/spanconfigmanager"
+	"github.com/cockroachdb/cockroach/pkg/spanconfig/spanconfigreconciler"
 	"github.com/cockroachdb/cockroach/pkg/sql"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catalogkeys"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/hydratedtables"
@@ -564,13 +565,12 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 			cfg.rangeFeedFactory,
 		),
 
-		QueryCache:                  querycache.New(cfg.QueryCacheSize),
-		ProtectedTimestampProvider:  cfg.protectedtsProvider,
-		ExternalIODirConfig:         cfg.ExternalIODirConfig,
-		HydratedTables:              hydratedTablesCache,
-		GCJobNotifier:               gcJobNotifier,
-		RangeFeedFactory:            cfg.rangeFeedFactory,
-		ConfigReconciliationJobDeps: cfg.spanConfigAccessor,
+		QueryCache:                 querycache.New(cfg.QueryCacheSize),
+		ProtectedTimestampProvider: cfg.protectedtsProvider,
+		ExternalIODirConfig:        cfg.ExternalIODirConfig,
+		HydratedTables:             hydratedTablesCache,
+		GCJobNotifier:              gcJobNotifier,
+		RangeFeedFactory:           cfg.rangeFeedFactory,
 	}
 
 	if sqlSchemaChangerTestingKnobs := cfg.TestingKnobs.SQLSchemaChanger; sqlSchemaChangerTestingKnobs != nil {
@@ -702,8 +702,24 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 
 	{
 		knobs, _ := cfg.TestingKnobs.SpanConfigManager.(*spanconfigmanager.TestingKnobs)
+		reconciler := spanconfigreconciler.New(
+			codec,
+			cfg.db,
+			cfg.Settings,
+			cfg.rangeFeedFactory,
+			cfg.clock,
+			cfg.circularInternalExecutor,
+			leaseMgr,
+			cfg.stopper,
+		)
 		reconciliationMgr := spanconfigmanager.New(
-			cfg.db, jobRegistry, cfg.circularInternalExecutor, cfg.spanConfigAccessor, knobs,
+			cfg.db,
+			jobRegistry,
+			cfg.circularInternalExecutor,
+			cfg.spanConfigAccessor,
+			reconciler,
+			cfg.stopper,
+			knobs,
 		)
 		execCfg.ConfigReconciliationJobDeps = reconciliationMgr
 		execCfg.StartConfigReconciliationJobHook = reconciliationMgr.StartJobIfNoneExist
@@ -830,7 +846,7 @@ func (s *SQLServer) preStart(
 	s.stmtDiagnosticsRegistry.Start(ctx, stopper)
 
 	// Create and start the span config reconciliation job if none exist.
-	s.execCfg.StartConfigReconciliationJobHook(ctx, stopper)
+	s.execCfg.StartConfigReconciliationJobHook(ctx)
 
 	// Before serving SQL requests, we have to make sure the database is
 	// in an acceptable form for this version of the software.

@@ -13,37 +13,91 @@ package spanconfigreconciler
 import (
 	"context"
 
+	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/kv"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvclient/rangefeed"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/spanconfig"
-	"github.com/cockroachdb/cockroach/pkg/spanconfig/spanconfigcatalog"
 	"github.com/cockroachdb/cockroach/pkg/sql"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descs"
+	"github.com/cockroachdb/cockroach/pkg/sql/catalog/lease"
+	"github.com/cockroachdb/cockroach/pkg/sql/sqlutil"
+	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/stop"
 )
 
 var _ spanconfig.Reconciler = &Reconciler{}
 
-// Reconciler is the cocnrete implementation of the ReconcilerI interface.
+// Reconciler is the concrete implementation of the Reconciler interface.
 type Reconciler struct {
-	execCfg *sql.ExecutorConfig
+	codec            keys.SQLCodec
+	DB               *kv.DB
+	settings         *cluster.Settings
+	rangeFeedFactory *rangefeed.Factory
+	clock            *hlc.Clock
+	ie               sqlutil.InternalExecutor
+	leaseManager     *lease.Manager
+	stopper          *stop.Stopper
 }
 
 // NewReconciler returns a Reconciler.
-func NewReconciler(config *sql.ExecutorConfig) *Reconciler {
+func New(
+	codec keys.SQLCodec,
+	DB *kv.DB,
+	settings *cluster.Settings,
+	rangeFeedFactory *rangefeed.Factory,
+	clock *hlc.Clock,
+	ie sqlutil.InternalExecutor,
+	leaseManager *lease.Manager,
+	stopper *stop.Stopper,
+) *Reconciler {
 	return &Reconciler{
-		execCfg: config,
+		codec:            codec,
+		DB:               DB,
+		settings:         settings,
+		rangeFeedFactory: rangeFeedFactory,
+		clock:            clock,
+		ie:               ie,
+		leaseManager:     leaseManager,
+		stopper:          stopper,
 	}
 }
 
-func (r *Reconciler) FullReconcile(ctx context.Context) (entries []spanconfig.Entry, err error) {
+func (r *Reconciler) Reconcile(ctx context.Context) (<-chan spanconfig.Update, error) {
+
+	updatesCh := make(chan spanconfig.Update)
+
+	if err := r.stopper.RunAsyncTask(ctx, "full-reconcile", func(ctx context.Context) {
+		entries, err := r.fullReconcile(ctx, r.leaseManager)
+		if err != nil {
+			log.Errorf(ctx, "error running full reconcile: %v", err)
+		}
+		for _, entry := range entries {
+			update := spanconfig.Update{
+				Deleted: false,
+				Entry:   entry,
+			}
+			updatesCh <- update
+		}
+	}); err != nil {
+		return nil, err
+	}
+	return updatesCh, nil
+}
+
+func (r *Reconciler) fullReconcile(
+	ctx context.Context, leaseManager *lease.Manager,
+) (entries []roachpb.SpanConfigEntry, err error) {
 	if err = descs.Txn(
 		ctx,
-		r.execCfg.Settings,
-		r.execCfg.LeaseManager,
-		r.execCfg.InternalExecutor,
-		r.execCfg.DB,
+		r.settings,
+		leaseManager,
+		r.ie,
+		r.DB,
 		func(ctx context.Context, txn *kv.Txn, descsCol *descs.Collection) error {
 			descs, err := descsCol.GetAllDescriptors(ctx, txn)
 			ids := make(descpb.IDs, 0, len(descs))
@@ -55,7 +109,7 @@ func (r *Reconciler) FullReconcile(ctx context.Context) (entries []spanconfig.En
 			if err != nil {
 				return err
 			}
-			entries, err = r.GenerateSpanConfigurations(ctx, txn, ids)
+			entries, err = r.generateSpanConfigurations(ctx, txn, ids)
 			return err
 		}); err != nil {
 		return nil, err
@@ -63,10 +117,9 @@ func (r *Reconciler) FullReconcile(ctx context.Context) (entries []spanconfig.En
 	return entries, nil
 }
 
-// GenerateSpanConfigurations implements the Reconciler interface.
-func (r *Reconciler) GenerateSpanConfigurations(
+func (r *Reconciler) generateSpanConfigurations(
 	ctx context.Context, txn *kv.Txn, ids descpb.IDs,
-) ([]spanconfig.Entry, error) {
+) ([]roachpb.SpanConfigEntry, error) {
 	// TODO(arul): Check if there is a utility for this/if this can go in a
 	// utility.
 	copyKey := func(k roachpb.Key) roachpb.Key {
@@ -75,16 +128,18 @@ func (r *Reconciler) GenerateSpanConfigurations(
 		return k2
 	}
 
-	ret := make([]spanconfig.Entry, 0, len(ids))
+	ret := make([]roachpb.SpanConfigEntry, 0, len(ids))
 	for _, id := range ids {
-		zoneProto, err := sql.GetHydratedZoneConfigForTable(ctx, txn, r.execCfg.Codec, id)
+		zone, err := sql.GetHydratedZoneConfigForTable(ctx, txn, r.codec, id)
 		if err != nil {
 			return nil, err
 		}
-		zone := spanconfigcatalog.NewZoneConfigFromProto(zoneProto)
+		spanConfig, err := zone.ToSpanConfig()
+		if err != nil {
+			return nil, err
+		}
 
-		tablePrefix := r.execCfg.Codec.TablePrefix(uint32(id))
-
+		tablePrefix := r.codec.TablePrefix(uint32(id))
 		prev := tablePrefix
 		for i := range zone.SubzoneSpans {
 			// We need to prepend the tablePrefix to the spans stored inside the
@@ -108,20 +163,23 @@ func (r *Reconciler) GenerateSpanConfigurations(
 			// it using the parent zone configuration.
 			if !prev.Equal(span.Key) {
 				ret = append(ret,
-					spanconfig.MakeEntry(
-						roachpb.Span{Key: copyKey(prev), EndKey: copyKey(span.Key)},
-						zone,
-					),
+					roachpb.SpanConfigEntry{
+						Span:   roachpb.Span{Key: copyKey(prev), EndKey: copyKey(span.Key)},
+						Config: spanConfig,
+					},
 				)
 			}
 
 			// Add an entry for the subzone.
-			subzoneZone := spanconfigcatalog.NewZoneConfigFromProto(&zone.Subzones[zone.SubzoneSpans[i].SubzoneIndex].Config)
+			subzoneSpanConfig, err := zone.Subzones[zone.SubzoneSpans[i].SubzoneIndex].Config.ToSpanConfig()
+			if err != nil {
+				return nil, err
+			}
 			ret = append(ret,
-				spanconfig.MakeEntry(
-					roachpb.Span{Key: copyKey(span.Key), EndKey: copyKey(span.EndKey)},
-					subzoneZone,
-				),
+				roachpb.SpanConfigEntry{
+					Span:   roachpb.Span{Key: copyKey(span.Key), EndKey: copyKey(span.EndKey)},
+					Config: subzoneSpanConfig,
+				},
 			)
 
 			prev = copyKey(span.EndKey)
@@ -129,10 +187,11 @@ func (r *Reconciler) GenerateSpanConfigurations(
 
 		if !prev.Equal(tablePrefix.PrefixEnd()) {
 			ret = append(ret,
-				spanconfig.MakeEntry(
-					roachpb.Span{Key: prev, EndKey: tablePrefix.PrefixEnd()},
-					zone,
-				))
+				roachpb.SpanConfigEntry{
+					Span:   roachpb.Span{Key: prev, EndKey: tablePrefix.PrefixEnd()},
+					Config: spanConfig,
+				},
+			)
 		}
 	}
 

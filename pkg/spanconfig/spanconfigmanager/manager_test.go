@@ -18,6 +18,8 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
+	"github.com/cockroachdb/cockroach/pkg/keys"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvclient/rangefeed"
 	"github.com/cockroachdb/cockroach/pkg/server"
 	"github.com/cockroachdb/cockroach/pkg/spanconfig/spanconfigmanager"
 	"github.com/cockroachdb/cockroach/pkg/sql"
@@ -47,10 +49,15 @@ func TestManagerJobCreation(t *testing.T) {
 	ts := tc.Server(0)
 	var createdCount int32
 	manager := spanconfigmanager.New(
+		keys.SystemSQLCodec,
 		ts.DB(),
+		ts.ClusterSettings(),
 		ts.JobRegistry().(*jobs.Registry),
 		ts.InternalExecutor().(*sql.InternalExecutor),
 		ts.Node().(*server.Node),
+		ts.RangeFeedFactory().(*rangefeed.Factory),
+		tc.Stopper(),
+		ts.Clock(),
 		&spanconfigmanager.TestingKnobs{
 			CreatedJobInterceptor: func(job *jobs.Job) {
 				if atomic.AddInt32(&createdCount, 1) > 1 {
@@ -63,9 +70,9 @@ func TestManagerJobCreation(t *testing.T) {
 	)
 
 	// Queue up concurrent attempts to create and start the reconciliation job.
-	manager.StartJobIfNoneExist(ctx, tc.Stopper())
-	manager.StartJobIfNoneExist(ctx, tc.Stopper())
-	manager.StartJobIfNoneExist(ctx, tc.Stopper())
+	manager.StartJobIfNoneExist(ctx)
+	manager.StartJobIfNoneExist(ctx)
+	manager.StartJobIfNoneExist(ctx)
 
 	testutils.SucceedsSoon(t, func() error {
 		if createdCount == 0 {

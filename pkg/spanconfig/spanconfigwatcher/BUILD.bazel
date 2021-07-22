@@ -41,7 +41,6 @@ go_library(
         "//pkg/kv/kvclient/rangefeed",
         "//pkg/roachpb",
         "//pkg/spanconfig",
-        "//pkg/spanconfig/spanconfigcatalog",
         "//pkg/spanconfig/spanconfigdecoder",
         "//pkg/util/hlc",
         "//pkg/util/log",

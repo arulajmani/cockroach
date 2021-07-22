@@ -13,9 +13,7 @@ package spanconfig
 import (
 	"context"
 
-	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
-	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 )
 
@@ -42,13 +40,9 @@ type ReconciliationDependencies interface {
 	// applicable to a given tenant.
 	Accessor
 
-	// TODO(zcfgs-pod): We'll also needs access to a tenant's system.descriptor,
-	// or ideally a Watcher emitting relevant Updates from a tenant's
-	// system.{descriptor,zones}. That suggests we'll want two Watcher
-	// implementations:
-	// - Something per-store, watching over system.span_configurations.
-	// - Something watching over a tenant's system.{descriptor,zones}, emitting
-	//   updates for the reconciliation process.
+	// Reconciler maintains a rangefeed over system.{descriptor, zones} and emits
+	// updates.
+	Reconciler
 }
 
 // Watcher emits observed updates to span configs.
@@ -63,28 +57,13 @@ type Update struct {
 	// updated. If deleted is true, the config over that span has been deleted
 	// (those keys no longer exist). If false, the embedded config is what the
 	// keyspan was updated to.
-	Entry Entry
+	Entry roachpb.SpanConfigEntry
 
 	// Deleted is true if the span config entry has been deleted.
 	Deleted bool
 }
 
-// Config is an interface to be shared by {Zone,Span} configs.
-type Config interface {
-	Equal(o interface{}) bool
-
-	// Config is a marker method.
-	Config()
-	GenerateSpanConfig() (roachpb.SpanConfig, error)
-}
-
 // Reconciler is responsible for reconciling zone configs to span configs.
 type Reconciler interface {
-	// GenerateSpanConfigurations generates span configurations for the given
-	// set of IDs. Right now it expects the given IDs to be table IDs.
-	// TODO(arul): Account for non-table IDs as well.
-	GenerateSpanConfigurations(ctx context.Context, txn *kv.Txn, ids descpb.IDs) ([]Entry, error)
-
-	// FullReconcile generates a span configuration for all tables.
-	FullReconcile(ctx context.Context) ([]Entry, error)
+	Reconcile(ctx context.Context) (<-chan Update, error)
 }

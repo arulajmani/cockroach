@@ -109,6 +109,7 @@ go_library(
         "//pkg/spanconfig",
         "//pkg/spanconfig/spanconfigjob",
         "//pkg/spanconfig/spanconfigmanager",
+        "//pkg/spanconfig/spanconfigreconciler",
         "//pkg/spanconfig/spanconfigwatcher",
         "//pkg/sql",
         "//pkg/sql/catalog/bootstrap",
