@@ -18,7 +18,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 )
 
-// Accessor is an implementation used by the SQL layer in order to implement the
+// KVAccessor is an implementation used by the SQL layer in order to implement the
 // resolver.SchemaResolver interface on top of the planner. Its abstract nature
 // is due to its legacy rather than for proper dependency injection. It is only
 // implemented by descs.Collection. This status quo is not intended to persist

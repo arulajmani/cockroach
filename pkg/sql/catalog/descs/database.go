@@ -45,7 +45,7 @@ func (tc *Collection) GetImmutableDatabaseByName(
 	return tc.getDatabaseByName(ctx, txn, name, flags)
 }
 
-// GetDatabaseDesc implements the Accessor interface.
+// GetDatabaseDesc implements the KVAccessor interface.
 //
 // TODO(ajwerner): This exists to support the SchemaResolver interface and
 // should be removed or adjusted.

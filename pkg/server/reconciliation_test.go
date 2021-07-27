@@ -73,7 +73,7 @@ func TestUpdateSpanConfigSeenByAllStores(t *testing.T) {
 				},
 			}
 
-			require.NoError(t, s.Node().(spanconfig.Accessor).UpdateSpanConfigEntries(ctx, update, nil))
+			require.NoError(t, s.Node().(spanconfig.KVAccessor).UpdateSpanConfigEntries(ctx, update, nil))
 
 			select {
 			case <-waitForAllUpdatesCh:

@@ -8,7 +8,7 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 
-package spanconfigwatcher
+package spanconfigkvwatcher
 
 import (
 	"context"
@@ -26,27 +26,27 @@ import (
 
 // New instantiates a span configuration watcher (watching over
 // system.span_configurations).
-func New(db *kv.DB, clock *hlc.Clock, rangeFeedFactory *rangefeed.Factory) *Watcher {
-	return &Watcher{
+func New(db *kv.DB, clock *hlc.Clock, rangeFeedFactory *rangefeed.Factory) *KVWatcher {
+	return &KVWatcher{
 		db:               db,
 		clock:            clock,
 		rangeFeedFactory: rangeFeedFactory,
 	}
 }
 
-// Watcher is used to watch for span configuration changes using a rangefeed.
-type Watcher struct {
+// KVWatcher is used to watch for span configuration changes using a rangefeed.
+type KVWatcher struct {
 	db               *kv.DB
 	clock            *hlc.Clock
 	rangeFeedFactory *rangefeed.Factory
 }
 
-var _ spanconfig.Watcher = &Watcher{}
+var _ spanconfig.KVWatcher = &KVWatcher{}
 
 // Watch will kick off the span config watcher. It establishes a rangefeed over
 // the span configurations table, and sends forth updates to it through the
 // returned channel.
-func (w *Watcher) Watch(
+func (w *KVWatcher) Watch(
 	ctx context.Context, stopper *stop.Stopper,
 ) (<-chan spanconfig.Update, error) {
 	updateCh := make(chan spanconfig.Update)

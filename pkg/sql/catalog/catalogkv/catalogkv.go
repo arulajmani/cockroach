@@ -112,7 +112,7 @@ func NewBuilder(desc *descpb.Descriptor) catalog.DescriptorBuilder {
 }
 
 // TODO(ajwerner): The below flags are suspiciously similar to the flags passed
-// to accessor methods. Furthermore we're pretty darn unhappy with the Accessor
+// to accessor methods. Furthermore we're pretty darn unhappy with the KVAccessor
 // API as it provides a handle to the transaction for bad reasons.
 //
 // The below GetDescriptorByID function should instead get unified with the tree

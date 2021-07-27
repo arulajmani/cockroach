@@ -201,7 +201,7 @@ type sqlServerArgs struct {
 	systemConfigProvider config.SystemConfigProvider
 
 	// Used by the span config reconciliation job.
-	spanConfigAccessor spanconfig.Accessor
+	spanConfigAccessor spanconfig.KVAccessor
 
 	// Used by DistSQLPlanner.
 	nodeDialer *nodedialer.Dialer

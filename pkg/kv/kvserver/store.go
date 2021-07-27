@@ -726,7 +726,7 @@ type StoreConfig struct {
 	ProtectedTimestampCache protectedts.Cache
 
 	// Used to watch for span configuration changes.
-	SpanConfigWatcher spanconfig.Watcher
+	SpanConfigWatcher spanconfig.KVWatcher
 }
 
 // ConsistencyTestingKnobs is a BatchEvalTestingKnobs struct used to control the

@@ -368,7 +368,7 @@ type fkResolver struct {
 
 var _ resolver.SchemaResolver = &fkResolver{}
 
-// Accessor implements the resolver.SchemaResolver interface.
+// KVAccessor implements the resolver.SchemaResolver interface.
 func (r *fkResolver) Accessor() catalog.Accessor {
 	return nil
 }

@@ -9,7 +9,7 @@
 // licenses/APL.txt.
 
 // Package descs provides abstractions for dealing with sets of descriptors.
-// It is utilized during schema changes and by catalog.Accessor implementations.
+// It is utilized during schema changes and by catalog.KVAccessor implementations.
 package descs
 
 import (

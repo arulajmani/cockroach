@@ -17,12 +17,12 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 )
 
-// Accessor mediates access to the cluster's span configs applicable for a given
+// KVAccessor mediates access to the cluster's span configs applicable for a given
 // tenant.
 //
 // TODO(zcfgs-pod): Should the manager be the only non-test type implementing
 // this interface, for clarity?
-type Accessor interface {
+type KVAccessor interface {
 	// GetSpanConfigEntriesFor retrieves the span configurations over the
 	// requested span.
 	GetSpanConfigEntriesFor(ctx context.Context, span roachpb.Span) ([]roachpb.SpanConfigEntry, error)
@@ -36,22 +36,22 @@ type Accessor interface {
 // reconciliation process. The reconciliation process reconciles a tenant's span
 // configs with the cluster's.
 type ReconciliationDependencies interface {
-	// Accessor mediates access to the subset of the cluster's span configs
+	// KVAccessor mediates access to the subset of the cluster's span configs
 	// applicable to a given tenant.
-	Accessor
+	KVAccessor
 
 	// SQLWatcher maintains a rangefeed over system.{descriptor, zones} and emits
 	// updates.
 	SQLWatcher
 }
 
-// Watcher emits observed updates to span configs.
-type Watcher interface {
+// KVWatcher emits observed updates to span configs.
+type KVWatcher interface {
 	Watch(ctx context.Context, stopper *stop.Stopper) (<-chan Update, error)
 }
 
 // Update captures what span has seen a config change. It's the unit of what a
-// Watcher emits.
+// KVWatcher emits.
 type Update struct {
 	// Entry captures the keyspan and the corresponding config that has been
 	// updated. If deleted is true, the config over that span has been deleted

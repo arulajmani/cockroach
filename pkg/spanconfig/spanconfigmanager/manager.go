@@ -34,7 +34,7 @@ type Manager struct {
 	knobs   *spanconfig.TestingKnobs
 	stopper *stop.Stopper
 
-	spanconfig.Accessor
+	spanconfig.KVAccessor
 	spanconfig.SQLWatcher
 }
 
@@ -45,7 +45,7 @@ func New(
 	db *kv.DB,
 	jr *jobs.Registry,
 	ie sqlutil.InternalExecutor,
-	accessor spanconfig.Accessor,
+	accessor spanconfig.KVAccessor,
 	sqlWatcher spanconfig.SQLWatcher,
 	stopper *stop.Stopper,
 	knobs *spanconfig.TestingKnobs,
@@ -59,7 +59,7 @@ func New(
 		ie:         ie,
 		knobs:      knobs,
 		stopper:    stopper,
-		Accessor:   accessor,
+		KVAccessor: accessor,
 		SQLWatcher: sqlWatcher,
 	}
 }

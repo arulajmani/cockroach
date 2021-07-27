@@ -43,7 +43,7 @@ type SchemaResolver interface {
 	tree.QualifiedNameResolver
 	tree.TypeReferenceResolver
 
-	// Accessor is a crufty name and interface that wraps the *descs.Collection.
+	// KVAccessor is a crufty name and interface that wraps the *descs.Collection.
 	Accessor() catalog.Accessor
 	CurrentSearchPath() sessiondata.SearchPath
 	CommonLookupFlags(required bool) tree.CommonLookupFlags
