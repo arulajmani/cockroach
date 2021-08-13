@@ -1423,3 +1423,19 @@ type emptyMetricStruct struct{}
 var _ metric.Struct = emptyMetricStruct{}
 
 func (emptyMetricStruct) MetricStruct() {}
+
+// GetSpanConfigs is part of the roachpb.InternalServer service.
+func (n *Node) GetSpanConfigs(
+	ctx context.Context, req *roachpb.GetSpanConfigsRequest,
+) (*roachpb.GetSpanConfigsResponse, error) {
+	// TODO(arul): fill this in.
+	return nil, errors.New("unimplemented")
+}
+
+// UpdateSpanConfigs is part of the roachpb.InternalServer service.
+func (n *Node) UpdateSpanConfigs(
+	ctx context.Context, req *roachpb.UpdateSpanConfigsRequest,
+) (*roachpb.UpdateSpanConfigsResponse, error) {
+	// TODO(arul): fill this in
+	return nil, errors.New("unimplemented")
+}
