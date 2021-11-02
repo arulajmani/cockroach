@@ -1640,9 +1640,21 @@ func (s *Store) Start(ctx context.Context, stopper *stop.Stopper) error {
 	}
 
 	if s.cfg.SpanConfigsEnabled {
-		s.cfg.SpanConfigSubscriber.OnSpanConfigUpdate(ctx, func(update roachpb.Span) {
-			s.onSpanConfigUpdate(ctx, update)
-		})
+		if err := s.stopper.RunAsyncTask(ctx, "spanconfig-subscriber", func(ctx context.Context) {
+			if err := s.cfg.SpanConfigSubscriber.Subscribe(ctx, base.DefaultRetryOptions(), func(update roachpb.Span) {
+				s.onSpanConfigUpdate(ctx, update)
+			}); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+
+				// TODO(irfansharif): We should never get here, but still, is
+				// fatalling the right thing to do?
+				log.Fatalf(ctx, "spanconfig-subscriber failed with %v", err)
+			}
+		}); err != nil {
+			return err
+		}
 
 		// When toggling between the system config span and the span configs
 		// infrastructure, we want to re-apply configs on all replicas from

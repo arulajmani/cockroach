@@ -169,7 +169,10 @@ func New(
 // existing handler is kept intact and is notified when the subscription is
 // re-established. After re-subscribing, the exported StoreReader will be
 // up-to-date and continue to be incrementally maintained.
-func (s *KVSubscriber) Subscribe(ctx context.Context, retryOpts retry.Options) error {
+// TODO (arul): Use the handler passed into this thing.
+func (s *KVSubscriber) Subscribe(
+	ctx context.Context, retryOpts retry.Options, handler func(update roachpb.Span),
+) error {
 	ctx, cancel := s.stopper.WithCancelOnQuiesce(ctx)
 	defer cancel()
 

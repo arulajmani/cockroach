@@ -1748,21 +1748,6 @@ func (s *Server) PreStart(ctx context.Context) error {
 		return err
 	}
 
-	if s.cfg.SpanConfigsEnabled && s.spanConfigSubscriber != nil {
-		if err := s.stopper.RunAsyncTask(ctx, "spanconfig-subscriber", func(ctx context.Context) {
-			if err := s.spanConfigSubscriber.Subscribe(ctx, base.DefaultRetryOptions()); err != nil {
-				if errors.Is(err, context.Canceled) {
-					return
-				}
-
-				// TODO(irfansharif): We should never get here, but still, is
-				// fatalling the right thing to do?
-				log.Fatalf(ctx, "spanconfig-subscriber failed with %v", err)
-			}
-		}); err != nil {
-			return err
-		}
-	}
 	// Start garbage collecting system events.
 	//
 	// NB: As written, this falls awkwardly between SQL and KV. KV is used only

@@ -26,6 +26,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
+	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -112,10 +113,11 @@ func (m *mockSpanConfigSubscriber) GetSpanConfigForKey(
 	return m.Store.GetSpanConfigForKey(ctx, key)
 }
 
-func (m *mockSpanConfigSubscriber) OnSpanConfigUpdate(
-	_ context.Context, callback func(roachpb.Span),
-) {
+func (m *mockSpanConfigSubscriber) Subscribe(
+	_ context.Context, _ retry.Options, callback func(roachpb.Span),
+) error {
 	m.callback = callback
+	return nil
 }
 
 var _ spanconfig.KVSubscriber = &mockSpanConfigSubscriber{}

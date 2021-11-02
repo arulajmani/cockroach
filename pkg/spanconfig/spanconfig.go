@@ -17,6 +17,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/retry"
 )
 
 // KVAccessor mediates access to KV span configurations pertaining to a given
@@ -70,7 +71,7 @@ type KVAccessor interface {
 //      (usually through a lazily targeted [min,max) span).
 type KVSubscriber interface {
 	StoreReader
-	OnSpanConfigUpdate(context.Context, func(updated roachpb.Span))
+	Subscribe(context.Context, retry.Options, func(updated roachpb.Span)) error
 }
 
 // SQLTranslator translates SQL descriptors and their corresponding zone
