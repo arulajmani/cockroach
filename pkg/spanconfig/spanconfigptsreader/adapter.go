@@ -71,7 +71,7 @@ func (a *adapter) GetProtectionTimestamps(
 
 	// The freshness of the adapter is the minimum freshness of the Cache and
 	// KVSubscriber.
-	subscriberFreshness.Backward(cacheFreshness)
+	subscriberFreshness.Forward(cacheFreshness)
 	return append(subscriberTimestamps, cacheTimestamps...), subscriberFreshness, nil
 }
 
