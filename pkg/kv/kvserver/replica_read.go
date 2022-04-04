@@ -39,6 +39,7 @@ func (r *Replica) executeReadOnlyBatch(
 	defer r.readOnlyCmdMu.RUnlock()
 
 	// Verify that the batch can be executed.
+	log.Event(ctx, "!!!!!! checking if execution can proceed")
 	st, err := r.checkExecutionCanProceed(ctx, ba, g)
 	if err != nil {
 		return nil, g, roachpb.NewError(err)

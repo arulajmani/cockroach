@@ -171,5 +171,6 @@ var kvMsgRegexp = regexp.MustCompile(
 		"^r.*: sending batch ",
 		"^cascading ",
 		"^fast path completed",
+		"^!!!",
 	}, "|"),
 )

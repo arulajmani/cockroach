@@ -62,6 +62,7 @@ func BatchCanBeEvaluatedOnFollower(ba roachpb.BatchRequest) bool {
 // must be transactional and composed exclusively of this kind of request to be
 // accepted as a follower read.
 func (r *Replica) canServeFollowerReadRLocked(ctx context.Context, ba *roachpb.BatchRequest) bool {
+	log.Eventf(ctx, "!!!!!! checking if we can serve via follower read")
 	eligible := BatchCanBeEvaluatedOnFollower(*ba) && FollowerReadsEnabled.Get(&r.store.cfg.Settings.SV)
 	if !eligible {
 		// We couldn't do anything with the error, propagate it.
@@ -75,6 +76,7 @@ func (r *Replica) canServeFollowerReadRLocked(ctx context.Context, ba *roachpb.B
 
 	switch typ := repDesc.GetType(); typ {
 	case roachpb.VOTER_FULL, roachpb.VOTER_INCOMING, roachpb.NON_VOTER:
+		log.Eventf(ctx, "%s replicas can serve follower reads", typ)
 	default:
 		log.Eventf(ctx, "%s replicas cannot serve follower reads", typ)
 		return false

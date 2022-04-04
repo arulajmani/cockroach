@@ -246,7 +246,7 @@ func runFollowerReadsTest(
 	// latency threshold of 25ms, which should be well below the latency of a
 	// cross-region hop to read from the leaseholder but well above the latency
 	// of a follower read.
-	const maxLatencyThreshold = 25 * time.Millisecond
+	const maxLatencyThreshold = 1 * time.Millisecond
 	_, err := db.ExecContext(
 		ctx, fmt.Sprintf(
 			"SET CLUSTER SETTING sql.trace.stmt.enable_threshold = '%s'",
@@ -876,7 +876,7 @@ func runFollowerReadsMixedVersionSingleRegionTest(
 	data := initFollowerReadsDB(ctx, t, c, topology)
 
 	// Upgrade one node to the new version and run the test.
-	randNode := 1 + rand.Intn(c.Spec().NodeCount)
+	randNode := 3
 	t.L().Printf("upgrading n%d to current version", randNode)
 	nodeToUpgrade := c.Node(randNode)
 	upgradeNodes(ctx, nodeToUpgrade, curVersion, t, c)

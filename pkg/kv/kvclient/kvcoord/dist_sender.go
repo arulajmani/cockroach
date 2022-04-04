@@ -1924,8 +1924,10 @@ func (ds *DistSender) sendToReplicas(
 
 	// If this request can be sent to a follower to perform a consistent follower
 	// read under the closed timestamp, promote its routing policy to NEAREST.
+	canSendToFollower := CanSendToFollower(ds.clusterID.Get(), ds.st, ds.clock, routing.ClosedTimestampPolicy(), ba)
+	log.Eventf(ctx, "!!!! determined can send to follower to be: %v", canSendToFollower)
 	if ba.RoutingPolicy == roachpb.RoutingPolicy_LEASEHOLDER &&
-		CanSendToFollower(ds.clusterID.Get(), ds.st, ds.clock, routing.ClosedTimestampPolicy(), ba) {
+		canSendToFollower {
 		ba.RoutingPolicy = roachpb.RoutingPolicy_NEAREST
 	}
 
@@ -1963,6 +1965,7 @@ func (ds *DistSender) sendToReplicas(
 		if idx != -1 {
 			replicas.MoveToFront(idx)
 			leaseholderFirst = true
+			log.VEvent(ctx, 2, "!!!! routing to known leaseholder")
 		} else {
 			// The leaseholder node's info must have been missing from gossip when we
 			// created replicas.
@@ -2029,6 +2032,7 @@ func (ds *DistSender) sendToReplicas(
 		curReplica := transport.NextReplica()
 		if first {
 			if log.ExpensiveLogEnabled(ctx, 2) {
+				log.VEventf(ctx, 2, "!!!!!!!! Range descriptor used to construct transport was %v", desc)
 				log.VEventf(ctx, 2, "r%d: sending batch %s to %s", desc.RangeID, ba.Summary(), curReplica)
 			}
 		} else {

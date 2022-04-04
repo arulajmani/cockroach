@@ -505,6 +505,9 @@ func (r *testRunner) runWorker(
 				if err := c.RunE(ctx, c.All(), "rm -rf "+perfArtifactsDir); err != nil {
 					return errors.Wrapf(err, "failed to remove perf artifacts dir")
 				}
+				if err := c.RunE(ctx, c.All(), "source ~/.bashrc "); err != nil {
+					return errors.Wrapf(err, "failed to source bashrc")
+				}
 				if c.localCertsDir != "" {
 					if err := os.RemoveAll(c.localCertsDir); err != nil {
 						return errors.Wrapf(err,

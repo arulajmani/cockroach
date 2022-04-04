@@ -1466,7 +1466,9 @@ func (r *Replica) checkGCThresholdAndLeaseRLocked(
 		if err != nil {
 			// No valid lease, but if we can serve this request via follower reads,
 			// we may continue.
-			if !r.canServeFollowerReadRLocked(ctx, ba) {
+			canServeViaFollowerRead := r.canServeFollowerReadRLocked(ctx, ba)
+			log.Eventf(ctx, "!!!!!! checked if we can serve using a follower read, got %v", canServeViaFollowerRead)
+			if !canServeViaFollowerRead {
 				// If not, return the error.
 				return kvserverpb.LeaseStatus{}, false, err
 			}
