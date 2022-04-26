@@ -64,7 +64,9 @@ func multitenantSmokeTest(ctx context.Context, t test.Test, c cluster.Cluster) {
 	require.NoError(t, err)
 
 	tenID := 11
-	ten := createTenantNode(ctx, t, c, c.Node(1), tenID, 2, 8011, 9011)
+	ten := createTenantNode(
+		ctx, t, c, c.Node(1), tenID, 2, 8011, 9011, true, /* secure */
+	)
 	runner := sqlutils.MakeSQLRunner(c.Conn(ctx, t.L(), 1))
 	runner.Exec(t, `SELECT crdb_internal.create_tenant($1)`, tenID)
 	ten.start(ctx, t, c, "./cockroach")

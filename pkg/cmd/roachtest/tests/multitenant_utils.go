@@ -23,6 +23,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/option"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/test"
 	"github.com/cockroachdb/cockroach/pkg/roachprod"
+	"github.com/cockroachdb/cockroach/pkg/roachprod/config"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/stretchr/testify/require"
 )
@@ -41,6 +42,7 @@ type tenantNode struct {
 	binary string // the binary last passed to start()
 	errCh  chan error
 	node   int
+	secure bool
 }
 
 func createTenantNode(
@@ -49,6 +51,7 @@ func createTenantNode(
 	c cluster.Cluster,
 	kvnodes option.NodeListOption,
 	tenantID, node, httpPort, sqlPort int,
+	secure bool,
 ) *tenantNode {
 
 	// In secure mode only the internal address works, possibly because its started
@@ -61,8 +64,11 @@ func createTenantNode(
 		kvAddrs:  kvAddrs,
 		node:     node,
 		sqlPort:  sqlPort,
+		secure:   secure,
 	}
-	tn.createTenantCert(ctx, t, c)
+	if tn.secure {
+		tn.createTenantCert(ctx, t, c)
+	}
 	return tn
 }
 
@@ -111,7 +117,7 @@ func (tn *tenantNode) secureURL() string {
 }
 
 func (tn *tenantNode) start(ctx context.Context, t test.Test, c cluster.Cluster, binary string) {
-	require.True(t, c.IsSecure())
+	require.Equal(t, c.IsSecure(), tn.secure)
 
 	tn.binary = binary
 	extraArgs := []string{
@@ -122,7 +128,7 @@ func (tn *tenantNode) start(ctx context.Context, t test.Test, c cluster.Cluster,
 	require.NoError(t, err)
 	tn.errCh = startTenantServer(
 		ctx, c, c.Node(tn.node), internalIPs[0], binary, tn.kvAddrs, tn.tenantID,
-		tn.httpPort, tn.sqlPort,
+		tn.httpPort, tn.sqlPort, tn.secure,
 		extraArgs...,
 	)
 
@@ -136,16 +142,17 @@ func (tn *tenantNode) start(ctx context.Context, t test.Test, c cluster.Cluster,
 
 	tn.pgURL = u.String()
 
-	// pgURL has full paths to local certs embedded, i.e.
-	// /tmp/roachtest-certs3630333874/certs, on the cluster we want just certs
-	// (i.e. to run workload on the tenant).
-	secureUrls, err := roachprod.PgURL(ctx, t.L(), c.MakeNodes(c.Node(tn.node)), "certs", false /*external*/, true /* secure */)
-	require.NoError(t, err)
-	u, err = url.Parse(strings.Trim(secureUrls[0], "'"))
-	require.NoError(t, err)
-	u.Host = externalIPs[0] + ":" + strconv.Itoa(tn.sqlPort)
-
-	tn.relativeSecureURL = u.String()
+	if tn.secure {
+		// pgURL has full paths to local certs embedded, i.e.
+		// /tmp/roachtest-certs3630333874/certs, on the cluster we want just certs
+		// (i.e. to run workload on the tenant).
+		urls, err := roachprod.PgURL(ctx, t.L(), c.MakeNodes(c.Node(tn.node)), "certs", false /*external*/, tn.secure)
+		require.NoError(t, err)
+		u, err = url.Parse(strings.Trim(urls[0], "'"))
+		require.NoError(t, err)
+		u.Host = externalIPs[0] + ":" + strconv.Itoa(tn.sqlPort)
+		tn.relativeSecureURL = u.String()
+	}
 
 	// The tenant is usually responsive ~right away, but it has on occasions
 	// taken more than 3s for it to connect to the KV layer, and it won't open
@@ -170,6 +177,24 @@ func (tn *tenantNode) start(ctx context.Context, t test.Test, c cluster.Cluster,
 		return err
 	})
 
+	db, err := gosql.Open("postgres", tn.pgURL)
+	require.NoError(t, err)
+	if config.CockroachDevLicense == "" {
+		t.L().Printf(
+			"%s: COCKROACH_DEV_LICENCSE unset: entireprise features will be unavailable\n",
+			c.Name(),
+		)
+	} else {
+		_, err := db.Exec(
+			`SET CLUSTER SETTING cluster.organization = 'Cockroach Labs - Production Testing'`,
+		)
+		require.NoError(t, err)
+		_, err = db.Exec(fmt.Sprintf(`
+SET CLUSTER SETTING enterprise.license = '%s';`, config.CockroachDevLicense),
+		)
+		require.NoError(t, err)
+	}
+
 	t.L().Printf("sql server for tenant %d running at %s", tn.tenantID, tn.pgURL)
 }
 
@@ -183,15 +208,20 @@ func startTenantServer(
 	tenantID int,
 	httpPort int,
 	sqlPort int,
+	secure bool,
 	extraFlags ...string,
 ) chan error {
 	args := []string{
-		"--certs-dir", "certs",
 		"--tenant-id=" + strconv.Itoa(tenantID),
 		"--http-addr", ifLocal(c, "127.0.0.1", "0.0.0.0") + ":" + strconv.Itoa(httpPort),
 		"--kv-addrs", strings.Join(kvAddrs, ","),
 		// Don't bind to external interfaces when running locally.
 		"--sql-addr", ifLocal(c, "127.0.0.1", internalIP) + ":" + strconv.Itoa(sqlPort),
+	}
+	if secure {
+		args = append(args, "--certs-dir", "certs")
+	} else {
+		args = append(args, "--insecure")
 	}
 	args = append(args, extraFlags...)
 
