@@ -564,6 +564,7 @@ func (ds *DistSender) getNodeDescriptor() *roachpb.NodeDescriptor {
 	// TODO(nvanbenschoten): open an issue about the effect of this.
 	g, ok := ds.nodeDescs.(*gossip.Gossip)
 	if !ok {
+		log.Infof(context.TODO(), "!!!!!!!! gossip cast not okay")
 		return nil
 	}
 
@@ -1972,7 +1973,9 @@ func (ds *DistSender) sendToReplicas(
 	case roachpb.RoutingPolicy_NEAREST:
 		// Order by latency.
 		log.VEvent(ctx, 2, "routing to nearest replica; leaseholder not required")
+		log.Infof(ctx, "!!!!!!!!! routing to nearest replica; leaseholder not required")
 		replicas.OptimizeReplicaOrder(ds.getNodeDescriptor(), ds.latencyFunc)
+		log.Infof(ctx, "!!!!!!!!! replica order %v", replicas)
 
 	default:
 		log.Fatalf(ctx, "unknown routing policy: %s", ba.RoutingPolicy)

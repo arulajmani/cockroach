@@ -202,34 +202,40 @@ func (rs ReplicaSlice) OptimizeReplicaOrder(
 	nodeDesc *roachpb.NodeDescriptor, latencyFn LatencyFunc,
 ) {
 	// If we don't know which node we're on, send the RPCs randomly.
-	if nodeDesc == nil {
-		shuffle.Shuffle(rs)
-		return
-	}
+	//if nodeDesc == nil {
+	//	log.Infof(context.TODO(), "!!!!!!!! don't know which node we're on; sending random RPCs")
+	//	shuffle.Shuffle(rs)
+	//	return
+	//}
 
 	// Sort replicas by latency and then attribute affinity.
 	sort.Slice(rs, func(i, j int) bool {
-		// Replicas on the same node have the same latency.
-		if rs[i].NodeID == rs[j].NodeID {
-			return false // i == j
-		}
-		// Replicas on the local node sort first.
-		if rs[i].NodeID == nodeDesc.NodeID {
-			return true // i < j
-		}
-		if rs[j].NodeID == nodeDesc.NodeID {
-			return false // j < i
+		if nodeDesc != nil {
+			// Replicas on the same node have the same latency.
+			if rs[i].NodeID == rs[j].NodeID {
+				return false // i == j
+			}
+			// Replicas on the local node sort first.
+			if rs[i].NodeID == nodeDesc.NodeID {
+				return true // i < j
+			}
+			if rs[j].NodeID == nodeDesc.NodeID {
+				return false // j < i
+			}
 		}
 
 		if latencyFn != nil {
+			log.Infof(context.TODO(), "!!!!!!!! we have a latency function")
 			latencyI, okI := latencyFn(rs[i].addr())
 			latencyJ, okJ := latencyFn(rs[j].addr())
 			if okI && okJ {
 				return latencyI < latencyJ
 			}
 		}
+
 		attrMatchI := localityMatch(nodeDesc.Locality.Tiers, rs[i].locality())
 		attrMatchJ := localityMatch(nodeDesc.Locality.Tiers, rs[j].locality())
+		log.Infof(context.TODO(), "!!!!!!!! locality match i = %d j = %d", attrMatchJ, attrMatchI)
 		// Longer locality matches sort first (the assumption is that
 		// they'll have better latencies).
 		return attrMatchI > attrMatchJ
