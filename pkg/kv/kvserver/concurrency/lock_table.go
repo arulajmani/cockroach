@@ -1746,7 +1746,7 @@ func (l *lockState) tryActiveWait(
 			l.informActiveWaiters()
 			return false, transitionedToFree
 		}
-		waiterLockMode := lock.MakeModeIntent(qg.guard.ts)
+		waiterLockMode := lock.MakeModeIntent(qqg.guard.ts)
 		if lock.Conflicts(waiterLockMode, guardLockMode, &g.lt.settings.SV) {
 			l.prepareActiveWait(g, notify, clock)
 			return true, transitionedToFree
@@ -1818,6 +1818,62 @@ func (l *lockState) adjustNonLockingReadersWaitQueue(g *lockTableGuardImpl) {
 	assert(l.holder.locked, "cannot add waiting readers to unheld lock")
 	l.waitingReaders.PushFront(g)
 	g.mu.locks[l] = struct{}{}
+}
+
+func tryActiveWait(l *lockState, g *lockTableGuardImpl, notify bool, clock *hlc.Clock) (wait bool) {
+	// It is possible for the lock to be empty and not deleted yet.
+	if l.isEmptyLock() {
+		return false
+	}
+
+	if l.alreadyHoldsLockAndIsAllowedToProceed(g) {
+		return false
+	}
+
+	// Lock is non-empty; check for conflicts with the lock holder.
+	conflicts, _ := l.conflictsWithLockHolder(g)
+	if conflicts {
+		l.prepareActiveWait(g, notify, clock)
+		return true
+	}
+
+	// Reads can proceed.
+	if g.str == lock.None {
+		return false
+	}
+
+	canWriterProceed := func() bool {
+		guardLockMode := lock.MakeModeIntent(g.ts)
+		for e := l.queuedWriters.Front(); e != nil; e = e.Next() {
+			qqg := e.Value.(*queuedGuard)
+			if qqg.guard.seqNum > g.seqNum {
+				return true
+			}
+			waiterLockMode := lock.MakeModeIntent(qqg.guard.ts)
+			if lock.Conflicts(waiterLockMode, guardLockMode, &g.lt.settings.SV) {
+				return false
+			}
+		}
+		panic("lock table bug")
+	}
+
+	if !canWriterProceed() {
+		l.prepareActiveWait(g, notify, clock)
+	}
+
+	// non-transactional writers can proceed without grabbing a claim.
+	if g.txn == nil {
+		return false
+	}
+
+	// transactional request.
+	claimLock := func() {
+		// Add as an inactive waiter in the correct spot. There's no need to check
+		// for queueLengthExceededError here because the request isn't actually
+		// waiting on this lock.
+	}
+	claimLock()
+	return false
 }
 
 // adjustWaitingWritersWaitQueue updates the receiver's wait queues to indicate
