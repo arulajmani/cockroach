@@ -790,6 +790,21 @@ type queuedGuard struct {
 	active bool // protected by lockState.mu
 }
 
+type WaiterStatus int
+
+const (
+	Unset WaiterStatus = 0
+
+	Active WaiterStatus = 1
+
+	Inactive WaiterStatus = 2
+)
+
+type queuedGuardNew struct {
+	status WaiterStatus
+	guard  *lockTableGuardImpl
+}
+
 // Information about a lock holder.
 type lockHolderInfo struct {
 	// nil if there is no holder. Else this is the TxnMeta of the latest call to
@@ -993,6 +1008,12 @@ type lockWaitQueue struct {
 	// waitSelf state since that requests don't conflict with locks held by their
 	// transaction.
 	waitingReaders list.List
+
+	// List of *queuedGuardNew.
+	waitingNonLockingReaders list.List
+
+	// List of *queuedGuardNew.
+	waitingLockingRequests list.List
 
 	// If there is a non-empty set of active waiters that are not waitSelf, then
 	// at least one must be distinguished.
@@ -1689,7 +1710,7 @@ func (l *lockState) tryActiveWait(
 		guard:  g,
 		active: false,
 	}
-	err := l.adjustWaitingWritersWaitQueue(qg)
+	err := l.upsertWaitingWritersWaitQueue(qg)
 	if err != nil {
 		if isMaxQueueLengthExceededError(err) {
 			// NB: Requests that encounter a lock wait-queue that is longer than what
@@ -1746,7 +1767,7 @@ func (l *lockState) tryActiveWait(
 			l.informActiveWaiters()
 			return false, transitionedToFree
 		}
-		waiterLockMode := lock.MakeModeIntent(qg.guard.ts)
+		waiterLockMode := lock.MakeModeIntent(qqg.guard.ts)
 		if lock.Conflicts(waiterLockMode, guardLockMode, &g.lt.settings.SV) {
 			l.prepareActiveWait(g, notify, clock)
 			return true, transitionedToFree
@@ -1784,7 +1805,7 @@ func (l *lockState) prepareActiveWait(g *lockTableGuardImpl, notify bool, clock 
 			guard:  g,
 			active: true,
 		}
-		err := l.adjustWaitingWritersWaitQueue(qg)
+		err := l.upsertWaitingWritersWaitQueue(qg)
 		if err != nil {
 			if !isMaxQueueLengthExceededError(err) {
 				panic(err)
@@ -1813,39 +1834,217 @@ func (l *lockState) prepareActiveWait(g *lockTableGuardImpl, notify bool, clock 
 //
 // REQUIRES: l.mu to be locked.
 // REQUIRES: g.mu to be locked.
-func (l *lockState) adjustNonLockingReadersWaitQueue(g *lockTableGuardImpl) {
-	assert(g.str == lock.None, "should only be called with non-locking reader")
-	assert(l.holder.locked, "cannot add waiting readers to unheld lock")
-	l.waitingReaders.PushFront(g)
-	g.mu.locks[l] = struct{}{}
+func (l *lockState) adjustNonLockingReadersWaitQueue(qg *queuedGuardNew) {
+	assert(qg.guard.str == lock.None, "should only be called with non-locking reader")
+	l.waitingReaders.PushFront(qg)
+	qg.guard.mu.locks[l] = struct{}{}
 }
 
-// adjustWaitingWritersWaitQueue updates the receiver's wait queues to indicate
+// TODO(XXX): tryActiveWait is no longer the correct name here.
+func tryActiveWait(l *lockState, g *lockTableGuardImpl, notify bool, clock *hlc.Clock) (wait bool) {
+	// Check if the thing can proceed without entering any queues.
+	if l.isRequestAllowedToProceed(g) {
+		return false
+	}
+
+	// Adjust wait queues.
+	if err := l.tentativelyAddRequestToWaitQueues(g); err != nil {
+		// handle wait queue length exceeded error.
+	}
+
+	if l.requestNeedsActiveWait(g) {
+		// Make the request an active waiter.
+		g.key = l.key
+		g.mu.startWait = true
+		g.mu.curLockWaitStart = clock.PhysicalTime()
+		l.markWaiterActive(g, clock)
+		ws := l.constructWaitingState(g)
+		g.updateWaitingStateLocked(ws)
+		if notify {
+			g.notify()
+		}
+		// NB: Note that we're doing this for transactional, locking requests
+		// regardless of whether they're waiting on this lock actively or not.
+		if g.txn != nil && g.str != lock.None { // transactional, locking requests
+			l.informActiveWaiters()
+		}
+		return true
+	}
+
+	if g.str == lock.None {
+		l.removeReadRequest(g)
+		return false
+	}
+
+	// Writers/locking requests.
+
+	// non-transactional.
+	if g.txn == nil {
+		l.removeNonTransactionalWriter(g)
+		return false
+	}
+
+	l.claimLock(g)
+	// Let other active waiters know about waiting state changes, if any, as a
+	// result of this request claiming the lock.
+	l.informActiveWaiters()
+	return false
+}
+
+// removeReadRequest removes the supplied read request from the lock's wait
+// queue.
+//
+// REQUIRES: read request should be present in the lock's wait queue.
+func (l *lockState) removeReadRequest(g *lockTableGuardImpl) {
+	assert(g.str == lock.None, "need a read request")
+	for e := l.waitingNonLockingReaders.Back(); e != nil; e = e.Prev() {
+		qqg := e.Value.(*queuedGuardNew)
+		if qqg.guard == g {
+			l.waitingNonLockingReaders.Remove(e)
+			return
+		}
+	}
+	panic("lock table bug")
+}
+
+// removeNonTransactionalWriter removes the supplied non-transactional write
+// request from the lock's wait queue.
+//
+// REQUIRES: non-txn writer request should be present in the lock's wait queue.
+func (l *lockState) removeNonTransactionalWriter(g *lockTableGuardImpl) {
+	assert(g.txn == nil, "expected non transactional writer")
+	for e := l.waitingLockingRequests.Back(); e != nil; e = e.Prev() {
+		qqg := e.Value.(*queuedGuardNew)
+		if qqg.guard == g {
+			l.waitingNonLockingReaders.Remove(e)
+			return
+		}
+	}
+	panic("lock table bug")
+}
+
+// claimLock allows the supplied request to claim the receiver's lock.
+//
+// REQUIRES: the request must be present in the lock's wait queue.
+func (l *lockState) claimLock(g *lockTableGuardImpl) {
+	assert(g.txn == nil, "expected non transactional writer")
+	for e := l.waitingLockingRequests.Back(); e != nil; e = e.Prev() {
+		qqg := e.Value.(*queuedGuardNew)
+		if qqg.guard == g {
+			qqg.status = Inactive
+			return
+		}
+	}
+	panic("lock table bug")
+}
+
+// tentativelyAddRequestToWaitQueues tentatively adds the request to the
+// receiver's wait queues.
+func (l *lockState) tentativelyAddRequestToWaitQueues(g *lockTableGuardImpl) error {
+	qg := &queuedGuardNew{
+		guard:  g,
+		status: Unset,
+	}
+	if g.str == lock.None {
+		l.adjustNonLockingReadersWaitQueue(qg)
+		return nil
+	}
+
+	return l.upsertWaitingWritersWaitQueue(qg)
+}
+
+// markWaiterActive marks the supplied request, g, as an active waiter.
+//
+// REQUIRES: g must be present in the lock's wait queues.
+func (l *lockState) markWaiterActive(g *lockTableGuardImpl, clock *hlc.Clock) {
+	if g.str == lock.None {
+		for e := l.waitingNonLockingReaders.Back(); e != nil; e = e.Prev() {
+			qqg := e.Value.(*queuedGuardNew)
+			if qqg.guard == g {
+				qqg.status = Active
+			}
+		}
+		return
+	}
+
+	for e := l.waitingLockingRequests.Back(); e != nil; e = e.Prev() {
+		qqg := e.Value.(*queuedGuardNew)
+		if qqg.guard == g {
+			qqg.status = Active
+		}
+	}
+}
+
+// isRequestAllowedToProceed returns true if the request can proceed without
+// making any datastructure changes.
+func (l *lockState) isRequestAllowedToProceed(g *lockTableGuardImpl) bool {
+	if l.isEmptyLock() {
+		return true
+	}
+
+	// Lock isn't held, and we're dealing with a reader.
+	if !l.holder.locked && g.str == lock.None {
+		return true
+	}
+
+	if l.alreadyHoldsLockAndIsAllowedToProceed(g) {
+		return true
+	}
+	return false
+}
+
+func (l *lockState) requestNeedsActiveWait(g *lockTableGuardImpl) bool {
+	// This needs to happen for all held locks.
+	if conflicts, _ := l.conflictsWithLockHolder(g); conflicts {
+		return true
+	}
+
+	if g.str == lock.None {
+		return true
+	}
+
+	guardLockMode := lock.MakeModeIntent(g.ts)
+	for e := l.waitingLockingRequests.Front(); e != nil; e = e.Next() {
+		qqg := e.Value.(*queuedGuardNew)
+		if qqg.guard == g {
+			// We found our request while scanning from the front before finding any
+			// conflicting waiters. There is no one for us to wait on.
+			return false
+		}
+		waiterLockMode := lock.MakeModeIntent(qqg.guard.ts)
+		if lock.Conflicts(waiterLockMode, guardLockMode, &g.lt.settings.SV) {
+			return true
+		}
+	}
+	panic("lock table bug -- request not found in the wait queue")
+}
+
+// upsertWaitingWritersWaitQueue updates the receiver's wait queues to indicate
 // the supplied locking request, referenced by the queuedGuard, is waiting on
-// it. The caller is responsible for correctly setting the active/inactive
-// status on the supplied queuedGuard.
+// it. If the request is already present, it is removed and the supplied
+// queuedGuard is added; otherwise, it is simply inserted.
 //
 // REQUIRES: l.mu to be locked.
 // REQUIRES: g.mu to be locked.
-func (l *lockState) adjustWaitingWritersWaitQueue(qg *queuedGuard) error {
+func (l *lockState) upsertWaitingWritersWaitQueue(qg *queuedGuardNew) error {
 	assert(qg.guard.str == lock.Intent, "unknown lock strength")
 
 	// First, check if the request is already in the queue. This can happen if the
 	// request was an inactive waiter at this lock and comes back around.
 	if _, inQueue := qg.guard.mu.locks[l]; inQueue {
 		// Find the request; it must already be in the correct position.
-		for e := l.queuedWriters.Front(); e != nil; e = e.Next() {
-			qqg := e.Value.(*queuedGuard)
+		for e := l.waitingLockingRequests.Front(); e != nil; e = e.Next() {
+			qqg := e.Value.(*queuedGuardNew)
 			if qqg.guard == qg.guard {
-				qqg.active = qg.active // copy over the active status, in case that's changing
-				return nil
+				l.waitingLockingRequests.Remove(e)
+				break
 			}
 		}
 		panic("lock table bug")
 	}
 
 	// Check if the lock's wait queue has room for one more request.
-	if qg.guard.maxWaitQueueLength > 0 && l.queuedWriters.Len() >= qg.guard.maxWaitQueueLength {
+	if qg.guard.maxWaitQueueLength > 0 && l.waitingLockingRequests.Len() >= qg.guard.maxWaitQueueLength {
 		// The wait-queue is longer than the request is willing to wait for.
 		// Instead of entering the queue, immediately reject the request. For
 		// simplicity, we are not finding the position of this writer in the
@@ -1858,8 +2057,8 @@ func (l *lockState) adjustWaitingWritersWaitQueue(qg *queuedGuard) error {
 	// The request isn't in the queue. Add it in the correct position, based on
 	// its sequence number.
 	var e *list.Element
-	for e = l.queuedWriters.Back(); e != nil; e = e.Prev() {
-		qqg := e.Value.(*queuedGuard)
+	for e = l.waitingLockingRequests.Back(); e != nil; e = e.Prev() {
+		qqg := e.Value.(*queuedGuardNew)
 		if qqg.guard.seqNum < qg.guard.seqNum {
 			break
 		}
