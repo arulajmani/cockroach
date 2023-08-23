@@ -1198,9 +1198,6 @@ type txnLock struct {
 	// As a result, the TxnMeta stored here may not correspond to the latest
 	// call to acquire/update the lock (if the call was made using a TxnMeta
 	// with an older epoch).
-	//
-	// TODO(arul): Now that we expect this to always be set, let's store the
-	// entire txnMeta here instead of storing it by reference.
 	txn *enginepb.TxnMeta
 
 	// INVARIANT: At least one of (and possibly both of) unreplicatedInfo and
