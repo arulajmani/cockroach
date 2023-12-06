@@ -13,6 +13,7 @@ package concurrency
 import (
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
+	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 )
 
 // verifiableLockTable is a lock table that is able to verify structural and
@@ -38,7 +39,7 @@ var _ lockTable = &verifyingLockTable{}
 // maybeWrapInVerifyingLockTable wraps the supplied lock table to perform
 // verification for test-only builds.
 func maybeWrapInVerifyingLockTable(lt lockTable) lockTable {
-	if buildutil.CrdbTestBuild {
+	if buildutil.CrdbTestBuild && !syncutil.DeadlockEnabled {
 		return &verifyingLockTable{lt: lt.(verifiableLockTable)}
 	}
 	return lt
@@ -95,7 +96,17 @@ func (v verifyingLockTable) AcquireLock(acq *roachpb.LockAcquisition) error {
 
 // UpdateLocks implements the lockTable interface.
 func (v verifyingLockTable) UpdateLocks(up *roachpb.LockUpdate) error {
-	defer v.lt.verify()
+	defer func() {
+		lt := v.lt.(*lockTableImpl)
+		lt.locks.mu.RLock()
+		snap := lt.locks.Clone()
+		lt.locks.mu.RUnlock()
+		iter := snap.MakeIter()
+		ltRange := &keyLocks{key: up.Span.Key, endKey: up.Span.EndKey}
+		for iter.FirstOverlap(ltRange); iter.Valid(); iter.NextOverlap(ltRange) {
+			v.lt.verifyKey(iter.Cur().key)
+		}
+	}()
 	return v.lt.UpdateLocks(up)
 }
 

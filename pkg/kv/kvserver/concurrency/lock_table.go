@@ -4717,9 +4717,14 @@ func (t *lockTableImpl) TestingSetMaxLocks(maxKeysLocked int64) {
 //
 // ACQUIRES: t.mu
 func (t *lockTableImpl) verify() {
+	// Grab tree snapshot to avoid holding read lock during iteration.
 	t.locks.mu.RLock()
-	defer t.locks.mu.RUnlock()
-	iter := t.locks.MakeIter()
+	snap := t.locks.Clone()
+	t.locks.mu.RUnlock()
+	// Reset snapshot to free resources.
+	defer snap.Reset()
+
+	iter := snap.MakeIter()
 	for iter.First(); iter.Valid(); iter.Next() {
 		l := iter.Cur()
 		err := func() error {
