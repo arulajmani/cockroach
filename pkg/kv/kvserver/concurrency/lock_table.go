@@ -3159,6 +3159,8 @@ func (kl *keyLocks) tryUpdateLockLocked(
 	if up.Status.IsFinalized() {
 		kl.clearLockHeldBy(up.Txn.ID)
 		if !kl.isLocked() {
+			// TODO(arul): add a comment.
+			kl.releaseLockingRequestsFromTxn(&up.Txn)
 			// The lock transitioned from held to unheld as a result of this lock
 			// update.
 			gc = kl.releaseWaitersOnKeyUnlocked()
@@ -3785,28 +3787,28 @@ func (kl *keyLocks) testingAssertCompatibleLockMode(
 // builds.
 //
 // REQUIRES: kl.mu to be locked.
-func (kl *keyLocks) verify(st *cluster.Settings) error {
+func (kl *keyLocks) verify(st *cluster.Settings) (bool, error) {
 	// 1. Ensure all lock holders are compatible with each other.
 	for e1 := kl.holders.Front(); e1 != nil; e1 = e1.Next() {
 		h1 := e1.Value
 		if h1.getLockHolderTxn() == nil {
-			return errors.AssertionFailedf("lock cannot be held by non-transactional request")
+			return false, errors.AssertionFailedf("lock cannot be held by non-transactional request")
 		}
 		for e2 := kl.holders.Front(); e2 != nil; e2 = e2.Next() {
 			h2 := e2.Value
 			if h2.getLockHolderTxn() == nil {
-				return errors.AssertionFailedf("lock cannot be held by non-transactional request")
+				return false, errors.AssertionFailedf("lock cannot be held by non-transactional request")
 			}
 			if h1.getLockHolderTxn().ID == h2.getLockHolderTxn().ID {
 				if h1 != h2 {
-					return errors.AssertionFailedf(
+					return false, errors.AssertionFailedf(
 						"same transaction should not be present twice in the holders list",
 					)
 				}
 				continue // locks are compatible with themselves; nothing to check
 			}
 			if lock.Conflicts(h1.getLockMode(), h2.getLockMode(), &st.SV) {
-				return errors.AssertionFailedf(
+				return false, errors.AssertionFailedf(
 					"lock holders incompatible with each other; %s holds lock with "+
 						"strength %s and %s holds lock with strength %s; lock: %s",
 					h1.getLockHolderTxn(), h1.getLockMode().Strength,
@@ -3821,7 +3823,7 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 	// dictated by the queuedGuard.order field.
 	for e := kl.queuedLockingRequests.Front(); e != nil; e = e.Next() {
 		if e.Prev() != nil && e.Prev().Value.order.after(e.Value.order) {
-			return errors.AssertionFailedf(
+			return false, errors.AssertionFailedf(
 				"queued locking requests should be stored in sorted order %s", kl,
 			)
 		}
@@ -3842,7 +3844,7 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 	// This gives us the following condition if the list of waiting readers is
 	// non-empty:
 	if kl.waitingReaders.Len() != 0 && kl.holders.Len() != 1 {
-		return errors.AssertionFailedf(
+		return false, errors.AssertionFailedf(
 			"unexpected number of lock holders when waiting readers are present: %s", kl,
 		)
 	}
@@ -3850,12 +3852,12 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 		// Ensure each of the readers does indeed conflict with the lock holder.
 		reader := e.Value
 		if reader.txn != nil && kl.holders.Front().Value.getLockHolderTxn().ID == reader.txn.ID {
-			return errors.AssertionFailedf(
+			return false, errors.AssertionFailedf(
 				"waiting non-locking reader belongs to the lock holder txn %s", kl,
 			)
 		}
 		if !lock.Conflicts(kl.holders.Front().Value.getLockMode(), reader.curLockMode(), &st.SV) {
-			return errors.AssertionFailedf("non locking reader %v does not conflict with lock holder %s",
+			return false, errors.AssertionFailedf("non locking reader %v does not conflict with lock holder %s",
 				reader, kl,
 			)
 		}
@@ -3916,12 +3918,12 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 			// 5a. The first request should have a (possibly joint) claim. As such, it
 			// should be inactive.
 			if kl.queuedLockingRequests.Front().Value.active {
-				return errors.AssertionFailedf("first request should be an inactive waiter for unheld lock")
+				return false, errors.AssertionFailedf("first request should be an inactive waiter for unheld lock")
 			}
 			// 5b. It should also be a transactional request, as non-transactional
 			// requests cannot establish claims.
 			if kl.queuedLockingRequests.Front().Value.guard.txn == nil {
-				return errors.AssertionFailedf("first request should be transactional for unheld lock")
+				return false, errors.AssertionFailedf("first request should be transactional for unheld lock")
 			}
 			// Note that we can't make any assertions about (what looks like) joint
 			// claims, because claims can be broken.
@@ -3933,10 +3935,10 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 		claimantTxn, _ := kl.claimantTxnFor(e.Value)
 		e.Value.mu.Lock()
 		if e.Value.mu.state.kind == waitSelf {
-			return errors.AssertionFailedf("readers should never wait for themselves")
+			return false, errors.AssertionFailedf("readers should never wait for themselves")
 		}
 		if e.Value.mu.state.txn != nil && e.Value.mu.state.txn.ID != claimantTxn.ID {
-			return errors.AssertionFailedf("mismatch between claimant txn ID and waiting state txn ID")
+			return false, errors.AssertionFailedf("mismatch between claimant txn ID and waiting state txn ID")
 		}
 		e.Value.mu.Unlock()
 	}
@@ -3949,17 +3951,33 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 		claimantTxn, _ := kl.claimantTxnFor(e.Value.guard)
 		e.Value.guard.mu.Lock()
 		if e.Value.guard.isSameTxn(claimantTxn) && e.Value.guard.mu.state.kind != waitSelf {
-			return errors.AssertionFailedf("locking request should be in waitSelf")
+			return false, errors.AssertionFailedf("locking request should be in waitSelf")
 		} else if e.Value.guard.mu.state.kind == waitSelf && !e.Value.guard.isSameTxn(claimantTxn) {
-			return errors.AssertionFailedf("locking request should not be in waitSelf state")
+			return false, errors.AssertionFailedf("locking request should not be in waitSelf state")
 		}
 		if e.Value.guard.mu.state.txn != nil && e.Value.guard.mu.state.txn.ID != claimantTxn.ID {
-			return errors.AssertionFailedf("mismatch between claimant txn ID and waiting state txn ID")
+			return false, errors.AssertionFailedf("mismatch between claimant txn ID and waiting state txn ID")
 		}
 		e.Value.guard.mu.Unlock()
 	}
 
-	return nil
+	// 7. Verify that state about lock promotion is correct.
+	// 7a. A request in the lock's wait queue with queueOrder.isPromoting = true
+	// should belong to a transaction that holds a lock
+
+	for e := kl.queuedLockingRequests.Front(); e != nil; e = e.Next() {
+		if e.Value.guard.txn == nil {
+			if e.Value.order.isPromoting {
+				return true, nil // promo-mismatch
+			}
+		} else {
+			if e.Value.order.isPromoting != kl.isLockedBy(e.Value.guard.txnMeta().ID) {
+				return true, nil // promo-mismatch
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func (kl *keyLocks) hasActivelyWaitingLockingRequest() bool {
@@ -4272,6 +4290,8 @@ func (t *lockTableImpl) AcquireLock(acq *roachpb.LockAcquisition) error {
 		kl = iter.Cur()
 		if acq.Durability == lock.Replicated {
 			if freed, mustGC := kl.tryFreeLockOnReplicatedAcquire(acq); freed {
+				// TODO(arul): add a comment.
+				kl.releaseLockingRequestsFromTxn(&acq.Txn)
 				// Don't remember uncontended replicated locks. Just like in the case
 				// where the lock is initially added as replicated, we drop replicated
 				// locks from the lockTable when being upgraded from Unreplicated to
@@ -4633,42 +4653,49 @@ func (t *lockTableImpl) TestingSetMaxLocks(maxKeysLocked int64) {
 // verify implements the verifiableLockTable interface.
 //
 // ACQUIRES: t.mu
-func (t *lockTableImpl) verify() {
+func (t *lockTableImpl) verify() bool {
 	t.locks.mu.RLock()
 	defer t.locks.mu.RUnlock()
 	iter := t.locks.MakeIter()
+	promoMismatch := false
 	for iter.First(); iter.Valid(); iter.Next() {
 		l := iter.Cur()
-		err := func() error {
+		m, err := func() (bool, error) {
 			l.mu.Lock()
 			defer l.mu.Unlock()
 			return l.verify(t.settings)
 		}()
+		promoMismatch = promoMismatch || m
 		if err != nil {
 			panic(fmt.Sprintf("lock table %s\nerror: %v", t.stringRLocked(), err))
 		}
 	}
+	return promoMismatch
 }
 
 // verifyKey implements the verifiableLockTable interface.
 //
 // ACQUIRES: t.mu
-func (t *lockTableImpl) verifyKey(key roachpb.Key) {
+func (t *lockTableImpl) verifyKey(key roachpb.Key) bool {
 	t.locks.mu.RLock()
 	defer t.locks.mu.RUnlock()
 	iter := t.locks.MakeIter()
 	iter.FirstOverlap(&keyLocks{key: key})
 	if !iter.Valid() {
-		return // no locks exist on this key
+		return false // no locks exist on this key
 	}
 	l := iter.Cur()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := l.verify(t.settings); err != nil {
+	promoMismatch, err := func() (bool, error) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.verify(t.settings)
+	}()
+	if err != nil {
 		panic(fmt.Sprintf(
 			"error verifying key %s; lock table %s\nerror: %v", key, t.stringRLocked(), err,
 		))
 	}
+	return promoMismatch
 }
 
 var _ verifiableLockTable = &lockTableImpl{}

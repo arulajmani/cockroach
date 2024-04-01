@@ -134,6 +134,10 @@ func (w *lockTableWaiterImpl) WaitOn(
 	// Make sure the contention time info is finalized when exiting the function.
 	defer tracer.notify(ctx, waitingState{kind: doneWaiting})
 
+	var debugTimer timeutil.Timer
+	defer debugTimer.Stop()
+	debugTimer.Reset(time.Second * 5)
+
 	for {
 		select {
 		// newStateC will be signaled for the transaction we are currently
@@ -417,6 +421,14 @@ func (w *lockTableWaiterImpl) WaitOn(
 
 		case <-shouldQuiesceC:
 			return kvpb.NewError(&kvpb.NodeUnavailableError{})
+		case <-debugTimer.C:
+			debugTimer.Read = true
+			txnID := uuid.Nil
+			if req.Txn != nil {
+				txnID = req.Txn.ID
+			}
+			log.Warningf(ctx, "!!! Request %v waited in the lock table for more than 5 seconds. "+
+				"\n State of lock table: %s", txnID, guard.(*lockTableGuardImpl).lt.String())
 		}
 	}
 }

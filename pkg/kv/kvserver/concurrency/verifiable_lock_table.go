@@ -11,8 +11,11 @@
 package concurrency
 
 import (
+	"context"
+
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
 // verifiableLockTable is a lock table that is able to verify structural and
@@ -22,11 +25,11 @@ type verifiableLockTable interface {
 	// verify ensures structural and correctness properties hold for each of the
 	// locks stored in the lock table. Verification is expensive and should only
 	// be performed for test builds.
-	verify()
+	verify() bool
 
 	// verifyKey ensures structural and correctness properties hold for all locks
 	// stored in the lock table for the given key.
-	verifyKey(roachpb.Key)
+	verifyKey(roachpb.Key) bool
 }
 
 type verifyingLockTable struct {
@@ -46,8 +49,12 @@ func maybeWrapInVerifyingLockTable(lt lockTable) lockTable {
 
 // Enable implements the lockTable interface.
 func (v verifyingLockTable) Enable(sequence roachpb.LeaseSequence) {
-	defer v.lt.verify()
+	before := v.lt.String()
 	v.lt.Enable(sequence)
+	promoMismatch := v.lt.verify()
+	if promoMismatch {
+		v.printPromoMismatch("enable", before)
+	}
 }
 
 // Clear implements the lockTable interface.
@@ -60,20 +67,34 @@ func (v verifyingLockTable) Clear(disable bool) {
 func (v verifyingLockTable) ScanAndEnqueue(
 	req Request, guard lockTableGuard,
 ) (lockTableGuard, *Error) {
-	defer v.lt.verify()
-	return v.lt.ScanAndEnqueue(req, guard)
+	before := v.lt.String()
+	g, err := v.lt.ScanAndEnqueue(req, guard)
+	promoMismatch := v.lt.verify()
+	if promoMismatch {
+		v.printPromoMismatch("scanAndEnqueue", before)
+	}
+	return g, err
 }
 
 // ScanOptimistic implements the lockTable interface.
 func (v verifyingLockTable) ScanOptimistic(req Request) lockTableGuard {
-	defer v.lt.verify()
-	return v.lt.ScanOptimistic(req)
+	before := v.lt.String()
+	g := v.lt.ScanOptimistic(req)
+	promoMismatch := v.lt.verify()
+	if promoMismatch {
+		v.printPromoMismatch("scanOptimistic", before)
+	}
+	return g
 }
 
 // Dequeue implements the lockTable interface.
 func (v verifyingLockTable) Dequeue(guard lockTableGuard) {
-	defer v.lt.verify()
+	before := v.lt.String()
 	v.lt.Dequeue(guard)
+	promoMismatch := v.lt.verify()
+	if promoMismatch {
+		v.printPromoMismatch("dequeue", before)
+	}
 }
 
 // AddDiscoveredLock implements the lockTable interface.
@@ -83,20 +104,35 @@ func (v verifyingLockTable) AddDiscoveredLock(
 	consultTxnStatusCache bool,
 	guard lockTableGuard,
 ) (bool, error) {
-	defer v.lt.verifyKey(foundLock.Key)
-	return v.lt.AddDiscoveredLock(foundLock, seq, consultTxnStatusCache, guard)
+	before := v.lt.String()
+	b, err := v.lt.AddDiscoveredLock(foundLock, seq, consultTxnStatusCache, guard)
+	promoMismatch := v.lt.verifyKey(foundLock.Key)
+	if promoMismatch {
+		v.printPromoMismatch("add discovered", before)
+	}
+	return b, err
 }
 
 // AcquireLock implements the lockTable interface.
 func (v verifyingLockTable) AcquireLock(acq *roachpb.LockAcquisition) error {
-	defer v.lt.verifyKey(acq.Key)
-	return v.lt.AcquireLock(acq)
+	before := v.lt.String()
+	err := v.lt.AcquireLock(acq)
+	promoMismatch := v.lt.verifyKey(acq.Key)
+	if promoMismatch {
+		v.printPromoMismatch("add discovered", before)
+	}
+	return err
 }
 
 // UpdateLocks implements the lockTable interface.
 func (v verifyingLockTable) UpdateLocks(up *roachpb.LockUpdate) error {
-	defer v.lt.verify()
-	return v.lt.UpdateLocks(up)
+	before := v.lt.String()
+	err := v.lt.UpdateLocks(up)
+	promoMismatch := v.lt.verifyKey(up.Key)
+	if promoMismatch {
+		v.printPromoMismatch("update locks", before)
+	}
+	return err
 }
 
 // PushedTransactionUpdated implements the lockTable interface.
@@ -124,4 +160,9 @@ func (v verifyingLockTable) String() string {
 // TestingSetMaxLocks implements the lockTable interface.
 func (v verifyingLockTable) TestingSetMaxLocks(maxKeysLocked int64) {
 	v.lt.TestingSetMaxLocks(maxKeysLocked)
+}
+
+func (v verifyingLockTable) printPromoMismatch(op string, before string) {
+	after := v.lt.String()
+	log.Infof(context.TODO(), "!!! promo-mismatch; method %s; \nbefore: %s; after %s", op, before, after)
 }
