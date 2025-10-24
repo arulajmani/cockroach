@@ -821,7 +821,7 @@ func (s *Server) getScrubbedStmtStats(
 		}
 
 		// Scrub the statement itself.
-		scrubbedQueryStr, ok := scrubStmtStatKey(s.cfg.VirtualSchemas, stat.Key.Query)
+		scrubbedQueryStr, ok := scrubStmtStatKey(s.cfg.VirtualSchemas, stat.Key.Query, nil)
 
 		// We don't want to report this stats if scrubbing has failed. We also don't
 		// wish to abort here because we want to try our best to report all the
@@ -1327,17 +1327,22 @@ func (ex *connExecutor) closeWrapper(ctx context.Context, recovered interface{})
 	if recovered != nil {
 		panicErr := logcrash.PanicAsError(1, recovered)
 
+		// If there's a statement currently being executed, we'll report
+		// on it.
 		if ex.curStmtAST != nil {
 			// A warning header guaranteed to go to stderr.
 			log.SqlExec.Shoutf(ctx, severity.ERROR,
 				"a SQL panic has occurred while executing the following statement:\n%s",
 				// For the log message, the statement is not anonymized.
 				truncateStatementStringForTelemetry(ex.curStmtAST.String()))
+
+			// Embed the statement in the error object for the telemetry
+			// report below. The statement gets anonymized.
+			vt := ex.planner.extendedEvalCtx.VirtualSchemas
+			panicErr = WithAnonymizedStatement(panicErr, ex.curStmtAST, vt, nil)
 		}
 
-		// Report the panic to telemetry, annotating the error with the (anonymized)
-		// currently executed statement and its plan gist, if available.
-		panicErr = ex.WithAnonymizedStatementAndGist(panicErr)
+		// Report the panic to telemetry in any case.
 		logcrash.ReportPanic(ctx, &ex.server.cfg.Settings.SV, panicErr, 1 /* depth */)
 
 		// Close the executor before propagating the panic further.
@@ -1841,12 +1846,8 @@ type connExecutor struct {
 	}
 
 	// curStmtAST is the statement that's currently being prepared or executed, if
-	// any. This is printed by high-level panic recovery and sentry reports.
+	// any. This is printed by high-level panic recovery.
 	curStmtAST tree.Statement
-
-	// curStmtPlanGist is the plan gist of the statement that's currently being
-	// prepared or executed, if any. This is included in sentry reports.
-	curStmtPlanGist redact.SafeString
 
 	// queryCancelKey is a 64-bit identifier for the session used by the
 	// pgwire cancellation protocol.
@@ -2278,7 +2279,6 @@ func (ex *connExecutor) run(
 
 	for {
 		ex.curStmtAST = nil
-		ex.curStmtPlanGist = ""
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -2455,7 +2455,7 @@ func (ex *connExecutor) execCmd() (retErr error) {
 			// If this is the first-time execution of a portal without a limit set,
 			// it means all rows will be exhausted, so no need to pause this portal.
 			if tcmd.Limit == 0 && portal.pauseInfo != nil && portal.pauseInfo.curRes == nil {
-				ex.disablePortalPausability(&portal)
+				portal.pauseInfo = nil
 			}
 
 			stmtRes := ex.clientComm.CreateStatementResult(
@@ -2467,7 +2467,7 @@ func (ex *connExecutor) execCmd() (retErr error) {
 				ex.sessionData().DataConversionConfig,
 				ex.sessionData().GetLocation(),
 				tcmd.Limit,
-				portal.Name,
+				portalName,
 				ex.implicitTxn(),
 				portal.portalPausablity,
 			)
@@ -2483,7 +2483,7 @@ func (ex *connExecutor) execCmd() (retErr error) {
 			// followed by Sync (which is the common case), then we still can auto-commit,
 			// which allows the 1PC txn fast path to be used.
 			canAutoCommit := ex.implicitTxn() && tcmd.FollowedBySync
-			ev, payload, err = ex.execPortal(ctx, portal, stmtRes, pinfo, canAutoCommit)
+			ev, payload, err = ex.execPortal(ctx, portal, portalName, stmtRes, pinfo, canAutoCommit)
 			return err
 		}()
 		// Note: we write to ex.statsCollector.phaseTimes, instead of ex.phaseTimes,
@@ -2670,16 +2670,8 @@ func (ex *connExecutor) execCmd() (retErr error) {
 		if ok {
 			ex.sessionEventf(ctx, "execution error: %s", pe.errorCause())
 			if resErr == nil {
-				resErr = pe.errorCause()
-				res.SetError(resErr)
+				res.SetError(pe.errorCause())
 			}
-		}
-		if resErr != nil &&
-			(pgerror.GetPGCode(resErr) == pgcode.Internal || errors.HasAssertionFailure(resErr)) {
-			// This is an assertion failure / crash that will lead to a sentry report.
-			// Attempt to annotate the error with the currently executing statement
-			// and its plan gist.
-			res.SetError(ex.WithAnonymizedStatementAndGist(resErr))
 		}
 		// For a pausable portal, we don't log the affected rows until we close the
 		// portal. However, we update the result for each execution. Thus, we need
@@ -3503,9 +3495,9 @@ var retryableMinTimestampBoundUnsatisfiableError = errors.Newf(
 	"retryable MinTimestampBoundUnsatisfiableError",
 )
 
-// ErrIsRetryable is true if the error is a client-visible retry error
+// errIsRetryable is true if the error is a client-visible retry error
 // or the error is a special error that is handled internally and retried.
-func ErrIsRetryable(err error) bool {
+func errIsRetryable(err error) bool {
 	return errors.HasInterface(err, (*pgerror.ClientVisibleRetryError)(nil)) ||
 		errors.Is(err, retryableMinTimestampBoundUnsatisfiableError) ||
 		descs.IsTwoVersionInvariantViolationError(err)
@@ -3563,7 +3555,7 @@ func (ex *connExecutor) makeErrEvent(err error, stmt tree.Statement) (fsm.Event,
 		}
 	}
 
-	retryable := ErrIsRetryable(err)
+	retryable := errIsRetryable(err)
 	if retryable {
 		var rc rewindCapability
 		var canAutoRetry bool
@@ -4093,8 +4085,7 @@ func (ex *connExecutor) txnStateTransitionsApplyWrapper(
 				errors.Safe(advInfo.txnEvent.eventType.String()),
 				res.Err())
 			log.Dev.Errorf(ex.Ctx(), "%v", err)
-			sentryErr := ex.WithAnonymizedStatementAndGist(err)
-			sentryutil.SendReport(ex.Ctx(), &ex.server.cfg.Settings.SV, sentryErr)
+			sentryutil.SendReport(ex.Ctx(), &ex.server.cfg.Settings.SV, err)
 			return advanceInfo{}, err
 		}
 
@@ -4230,20 +4221,6 @@ func (ex *connExecutor) waitForTxnJobs() error {
 		}
 	}
 	if !queryTimedout.Load() && len(ex.extraTxnState.jobs.created) > 0 {
-		jobIDs := strings.Builder{}
-		for i, jobID := range ex.extraTxnState.jobs.created {
-			if i > 0 {
-				jobIDs.WriteString(", ")
-			}
-			jobIDs.WriteString(jobID.String())
-		}
-		if err := ex.planner.SendClientNotice(ex.Ctx(),
-			pgnotice.Newf("waiting for job(s) to complete: %s\nIf the statement is canceled, jobs will continue in the background.", redact.SafeString(jobIDs.String())),
-			true, /* immediateFlush */
-		); err != nil {
-			return err
-		}
-
 		if err := ex.server.cfg.JobRegistry.WaitForJobs(jobWaitCtx,
 			ex.extraTxnState.jobs.created); err != nil {
 			if errors.Is(err, context.Canceled) && queryTimedout.Load() {
@@ -4913,22 +4890,6 @@ func (ps connExPrepStmtsAccessor) DeleteAll(ctx context.Context) {
 	ps.ex.extraTxnState.prepStmtsNamespace.clear(
 		ctx, &ps.ex.extraTxnState.prepStmtsNamespaceMemAcc,
 	)
-}
-
-// WithAnonymizedStatementAndGist attaches the anonymized form of the currently
-// executing statement and its query plan gist to an error object, if available.
-// It can only be called from the same thread that runs the connExecutor.
-func (ex *connExecutor) WithAnonymizedStatementAndGist(err error) error {
-	if ex.curStmtAST != nil {
-		vt := ex.planner.extendedEvalCtx.VirtualSchemas
-		anonStmtStr := anonymizeStmtAndConstants(ex.curStmtAST, vt)
-		anonStmtStr = truncateStatementStringForTelemetry(anonStmtStr)
-		err = errors.WithSafeDetails(err, "while executing: %s", errors.Safe(anonStmtStr))
-	}
-	if ex.curStmtPlanGist != "" {
-		err = errors.WithSafeDetails(err, "plan gist: %s", ex.curStmtPlanGist)
-	}
-	return err
 }
 
 var contextPlanGistKey = ctxutil.RegisterFastValueKey()

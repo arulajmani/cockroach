@@ -319,11 +319,6 @@ type replicateKV struct {
 	// preparing writing statements. This is necessary to get the workload running
 	// properly on a read only standby tenant.
 	readOnly bool
-
-	// uniform makes the kv workload use a uniform key instead of zipfian.
-	// Bidirectional LDR tests should probably use uniform to reduce conflict
-	// rate.
-	uniform bool
 }
 
 func (kv replicateKV) sourceInitCmd(tenantName string, nodes option.NodeListOption) string {
@@ -347,7 +342,7 @@ func (kv replicateKV) sourceRunCmd(tenantName string, nodes option.NodeListOptio
 		MaybeFlag(kv.debugRunDuration > 0, "duration", kv.debugRunDuration).
 		MaybeFlag(kv.maxQPS > 0, "max-rate", kv.maxQPS).
 		MaybeFlag(kv.readOnly, "prepare-read-only", true).
-		MaybeOption(!kv.uniform, "zipfian").
+		Option("zipfian").
 		Arg("{pgurl%s:%s}", nodes, tenantName).
 		WithEqualsSyntax()
 	return cmd.String()
@@ -403,8 +398,6 @@ type replicateBulkOps struct {
 
 	// debugSkipRollback skips all rollback steps during the test.
 	debugSkipRollback bool
-
-	withSettings []struct{ setting, value string }
 }
 
 func (bo replicateBulkOps) sourceInitCmd(tenantName string, nodes option.NodeListOption) string {
@@ -418,18 +411,6 @@ func (bo replicateBulkOps) sourceRunCmd(tenantName string, nodes option.NodeList
 func (bo replicateBulkOps) runDriver(
 	workloadCtx context.Context, c cluster.Cluster, t test.Test, setup *c2cSetup,
 ) error {
-	mainTenantConn := c.Conn(workloadCtx, t.L(), 1, option.VirtualClusterName(setup.src.name))
-	for _, pair := range bo.withSettings {
-		settingStmt := fmt.Sprintf("SET CLUSTER SETTING %s = '%s'", pair.setting, pair.value)
-		t.L().Printf("Setting on sys/main/standby-sys: %s", settingStmt)
-		setup.src.sysSQL.Exec(t, settingStmt)
-		// PCR settings are system-only; assume others are app-level.
-		if !strings.Contains(pair.setting, "physical_replication") {
-			if _, err := mainTenantConn.ExecContext(workloadCtx, settingStmt); err != nil {
-				return err
-			}
-		}
-	}
 	runBackupMVCCRangeTombstones(workloadCtx, t, c, mvccRangeTombstoneConfig{
 		skipBackupRestore: true,
 		skipClusterSetup:  true,
@@ -1548,69 +1529,12 @@ func registerClusterToCluster(r registry.Registry) {
 			suites:                    registry.Suites(registry.Nightly),
 		},
 		{
-			name:               "c2c/BulkOps/settings=none",
+			name:               "c2c/BulkOps",
 			srcNodes:           4,
 			dstNodes:           4,
 			cpus:               8,
 			pdSize:             100,
 			workload:           replicateBulkOps{},
-			timeout:            2 * time.Hour,
-			additionalDuration: 0,
-			// Cutover currently takes around 4 minutes, perhaps because we need to
-			// revert 10 GB of replicated data.
-			//
-			// TODO(msbutler): investigate further if cutover can be sped up.
-			cutoverTimeout: 20 * time.Minute,
-			cutover:        5 * time.Minute,
-			// In a few ad hoc runs, the max latency hikes up to 27 minutes before lag
-			// replanning and distributed catch up scans fix the poor initial plan. If
-			// max accepted latency doubles, then there's likely a regression.
-			maxAcceptedLatency: 1 * time.Hour,
-			// Skipping node distribution check because there is little data on the
-			// source when the replication stream begins.
-			skipNodeDistributionCheck: true,
-			clouds:                    registry.OnlyGCE,
-			suites:                    registry.Suites(registry.Nightly),
-		},
-		{
-			name:     "c2c/BulkOps/settings=ac-import",
-			srcNodes: 4,
-			dstNodes: 4,
-			cpus:     8,
-			pdSize:   100,
-			workload: replicateBulkOps{withSettings: []struct{ setting, value string }{
-				{"bulkio.import.elastic_control.enabled", "true"},
-				{"bulkio.elastic_cpu_control.request_duration", "3ms"},
-			}},
-			timeout:            2 * time.Hour,
-			additionalDuration: 0,
-			// Cutover currently takes around 4 minutes, perhaps because we need to
-			// revert 10 GB of replicated data.
-			//
-			// TODO(msbutler): investigate further if cutover can be sped up.
-			cutoverTimeout: 20 * time.Minute,
-			cutover:        5 * time.Minute,
-			// In a few ad hoc runs, the max latency hikes up to 27 minutes before lag
-			// replanning and distributed catch up scans fix the poor initial plan. If
-			// max accepted latency doubles, then there's likely a regression.
-			maxAcceptedLatency: 1 * time.Hour,
-			// Skipping node distribution check because there is little data on the
-			// source when the replication stream begins.
-			skipNodeDistributionCheck: true,
-			clouds:                    registry.OnlyGCE,
-			suites:                    registry.Suites(registry.Nightly),
-		},
-		{
-			name:     "c2c/BulkOps/settings=ac-and-splits",
-			srcNodes: 4,
-			dstNodes: 4,
-			cpus:     8,
-			pdSize:   100,
-			workload: replicateBulkOps{withSettings: []struct{ setting, value string }{
-				{"bulkio.import.elastic_control.enabled", "true"},
-				{"bulkio.elastic_cpu_control.request_duration", "3ms"},
-				{"physical_replication.consumer.ingest_split_event.enabled", "true"},
-			}},
 			timeout:            2 * time.Hour,
 			additionalDuration: 0,
 			// Cutover currently takes around 4 minutes, perhaps because we need to
@@ -2062,11 +1986,9 @@ func registerClusterReplicationDisconnect(r registry.Registry) {
 		var dstNode int
 		srcTenantSQL.QueryRow(t, `select split_part(consumer, '[', 1) from crdb_internal.cluster_replication_node_streams order by random() limit 1`).Scan(&dstNode)
 
-		roachprodDstNode := dstNode + sp.srcNodes
-
 		disconnectDuration := sp.additionalDuration
 		rd.t.L().Printf("Disconnecting Src %d, Dest %d for %.2f minutes", srcNode,
-			roachprodDstNode, disconnectDuration.Minutes())
+			dstNode, disconnectDuration.Minutes())
 
 		// Normally, the blackholeFailer is accessed through the failer interface,
 		// at least in the failover tests. Because this test shouldn't use all the
@@ -2074,7 +1996,7 @@ func registerClusterReplicationDisconnect(r registry.Registry) {
 		// blakholeFailer struct directly. In other words, in this test, we
 		// shouldn't treat the blackholeFailer as an abstracted api.
 		blackholeFailer := &blackholeFailer{t: rd.t, c: rd.c, input: true, output: true}
-		blackholeFailer.FailPartial(ctx, srcNode, []int{roachprodDstNode})
+		blackholeFailer.FailPartial(ctx, srcNode, []int{dstNode})
 
 		time.Sleep(disconnectDuration)
 		// Calling this will log the latest topology.

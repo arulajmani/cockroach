@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -48,12 +47,6 @@ var maxRetries = settings.RegisterIntSetting(
 	"cloudstorage.azure.max_retries",
 	"the maximum number of retries per Azure operation",
 	10)
-
-var tryTimeout = settings.RegisterDurationSetting(
-	settings.ApplicationLevel,
-	"cloudstorage.azure.try.timeout",
-	"the timeout for individual retry attempts in Azure operations",
-	60*time.Second)
 
 // A note on Azure authentication:
 //
@@ -249,11 +242,6 @@ func makeAzureStorage(
 	// Azure SDK defaults to 3 retries, which is too low to survive the 30 second
 	// brownout in TestAzureFaultInjection.
 	opts.Retry.MaxRetries = int32(maxRetries.Get(&args.Settings.SV))
-	// We occasionally see individual requests get stuck for 10+ minutes. If the
-	// source of the stuckness is transient or applies to individual
-	// connections/requests, then starting a new request after a timeout may
-	// succeed and allow the client to make forward progress.
-	opts.Retry.TryTimeout = tryTimeout.Get(&args.Settings.SV)
 
 	var azClient *service.Client
 	switch conf.Auth {
@@ -356,47 +344,31 @@ func isNotFoundErr(err error) bool {
 func (s *azureStorage) ReadFile(
 	ctx context.Context, basename string, opts cloud.ReadOptions,
 ) (_ ioctx.ReadCloserCtx, fileSize int64, _ error) {
-	object := path.Join(s.prefix, basename)
-
 	ctx, sp := tracing.ChildSpan(ctx, "azure.ReadFile")
 	defer sp.Finish()
-	sp.SetTag("path", attribute.StringValue(object))
-
-	r := cloud.NewResumingReader(ctx,
-		func(ctx context.Context, pos int64) (io.ReadCloser, int64, error) {
-			resp, err := s.getBlob(basename).DownloadStream(ctx, &azblob.DownloadStreamOptions{
-				Range: azblob.HTTPRange{Offset: pos},
-			})
-			if err != nil {
-				return nil, 0, err
-			}
-
-			length := *resp.ContentLength
-			if 0 < pos {
-				length, err = cloud.CheckHTTPContentRangeHeader(*resp.ContentRange, pos)
-				if err != nil {
-					return nil, 0, err
-				}
-			}
-
-			return resp.Body, length, nil
-		},
-		nil, // reader
-		opts.Offset,
-		0,
-		object,
-		cloud.ResumingReaderRetryOnErrFnForSettings(ctx, s.settings),
-		nil, // errFn
-	)
-
-	if err := r.Open(ctx); err != nil {
+	sp.SetTag("path", attribute.StringValue(path.Join(s.prefix, basename)))
+	resp, err := s.getBlob(basename).DownloadStream(ctx, &azblob.DownloadStreamOptions{Range: azblob.
+		HTTPRange{Offset: opts.Offset}})
+	if err != nil {
 		if isNotFoundErr(err) {
 			return nil, 0, cloud.WrapErrFileDoesNotExist(err, "azure blob does not exist")
 		}
-		return nil, 0, err
+		return nil, 0, errors.Wrapf(err, "failed to create azure reader")
 	}
 
-	return r, r.Size, nil
+	if !opts.NoFileSize {
+		if opts.Offset == 0 {
+			fileSize = *resp.ContentLength
+		} else {
+			fileSize, err = cloud.CheckHTTPContentRangeHeader(*resp.ContentRange, opts.Offset)
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+	}
+	// BUG: we should follow the azure retry setting here.
+	reader := resp.NewRetryReader(ctx, &azblob.RetryReaderOptions{MaxRetries: 3})
+	return ioctx.ReadCloserAdapter(reader), fileSize, nil
 }
 
 func (s *azureStorage) List(ctx context.Context, prefix, delim string, fn cloud.ListingFn) error {

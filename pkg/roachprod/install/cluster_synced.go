@@ -1085,10 +1085,7 @@ func (c *SyncedCluster) Wait(ctx context.Context, l *logger.Logger) error {
 		func(ctx context.Context, node Node) (*RunResultDetails, error) {
 			res := &RunResultDetails{Node: node}
 			var err error
-			// Only the `vm.OSInitializedFile` file is checked and not the
-			// `vm.DisksInitializedFile`, because it's possible to create VMs without
-			// any attached disks other than the boot disk.
-			cmd := fmt.Sprintf("test -e %s", vm.OSInitializedFile)
+			cmd := fmt.Sprintf("test -e %s -a -e %s", vm.DisksInitializedFile, vm.OSInitializedFile)
 			// N.B. we disable ssh debug output capture, lest we end up with _thousands_ of useless .log files.
 			opts := cmdOptsWithDebugDisabled()
 			for j := 0; j < 600; j++ {

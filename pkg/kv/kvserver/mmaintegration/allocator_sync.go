@@ -6,15 +6,12 @@
 package mmaintegration
 
 import (
-	"context"
-
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
-	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 )
 
@@ -48,14 +45,6 @@ type mmaState interface {
 	// AdjustPendingChangesDisposition is called by the allocator sync to adjust
 	// the disposition of pending changes.
 	AdjustPendingChangesDisposition(changeIDs []mmaprototype.ChangeID, success bool)
-	// BuildMMARebalanceAdvisor is called by the allocator sync to build a
-	// MMARebalanceAdvisor for the given existing store and candidates. The
-	// advisor should be later passed to IsInConflictWithMMA to determine if a
-	// given candidate is in conflict with the existing store.
-	BuildMMARebalanceAdvisor(existing roachpb.StoreID, cands []roachpb.StoreID) *mmaprototype.MMARebalanceAdvisor
-	// IsInConflictWithMMA is called by the allocator sync to determine if the
-	// given candidate is in conflict with the existing store.
-	IsInConflictWithMMA(ctx context.Context, cand roachpb.StoreID, advisor *mmaprototype.MMARebalanceAdvisor, cpuOnly bool) bool
 }
 
 // TODO(wenyihu6): make sure allocator sync can tolerate cluster setting
@@ -69,7 +58,6 @@ type mmaState interface {
 // pool. When mma is disabled, its sole purpose is to track and apply changes
 // to the store pool upon success.
 type AllocatorSync struct {
-	knobs        *TestingKnobs
 	sp           storePool
 	st           *cluster.Settings
 	mmaAllocator mmaState
@@ -86,14 +74,11 @@ type AllocatorSync struct {
 	}
 }
 
-func NewAllocatorSync(
-	sp storePool, mmaAllocator mmaState, st *cluster.Settings, knobs *TestingKnobs,
-) *AllocatorSync {
+func NewAllocatorSync(sp storePool, mmaAllocator mmaState, st *cluster.Settings) *AllocatorSync {
 	as := &AllocatorSync{
 		sp:           sp,
 		st:           st,
 		mmaAllocator: mmaAllocator,
-		knobs:        knobs,
 	}
 	as.mu.trackedChanges = make(map[SyncChangeID]trackedAllocatorChange)
 	return as
@@ -143,7 +128,6 @@ func (as *AllocatorSync) getTrackedChange(syncChangeID SyncChangeID) trackedAllo
 // identifier that can be used to call PostApply to apply the change to the
 // store pool upon success.
 func (as *AllocatorSync) NonMMAPreTransferLease(
-	ctx context.Context,
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
 	transferFrom, transferTo roachpb.ReplicationTarget,
@@ -160,7 +144,6 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 			transferTo:   transferTo.StoreID,
 		},
 	}
-	log.KvDistribution.VEventf(ctx, 2, "non-mma: adding lease transfer from s%s to s%s", transferFrom.StoreID, transferTo.StoreID)
 	return as.addTrackedChange(trackedChange)
 }
 
@@ -169,7 +152,6 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 // identifier that can be used to call PostApply to apply the change to the
 // store pool upon success.
 func (as *AllocatorSync) NonMMAPreChangeReplicas(
-	ctx context.Context,
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
 	changes kvpb.ReplicationChanges,
@@ -186,9 +168,6 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 			chgs: changes,
 		},
 	}
-	for _, chg := range changes {
-		log.KvDistribution.VEventf(ctx, 2, "non-mma: adding s%s with change=%s", chg.Target.StoreID, chg.ChangeType)
-	}
 	return as.addTrackedChange(trackedChange)
 }
 
@@ -197,9 +176,7 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 // caller. It is an identifier that can be used to call PostApply to apply the
 // change to the store pool upon success.
 func (as *AllocatorSync) MMAPreApply(
-	ctx context.Context,
-	usage allocator.RangeUsageInfo,
-	pendingChange mmaprototype.PendingRangeChange,
+	usage allocator.RangeUsageInfo, pendingChange mmaprototype.PendingRangeChange,
 ) SyncChangeID {
 	trackedChange := trackedAllocatorChange{
 		changeIDs: pendingChange.ChangeIDs(),
@@ -211,13 +188,9 @@ func (as *AllocatorSync) MMAPreApply(
 			transferFrom: pendingChange.LeaseTransferFrom(),
 			transferTo:   pendingChange.LeaseTransferTarget(),
 		}
-		log.KvDistribution.VEventf(ctx, 2, "mma: adding lease transfer from s%s to s%s", pendingChange.LeaseTransferFrom(), pendingChange.LeaseTransferTarget())
 	case pendingChange.IsChangeReplicas():
 		trackedChange.changeReplicasOp = &changeReplicasOp{
 			chgs: pendingChange.ReplicationChanges(),
-		}
-		for _, chg := range pendingChange.ReplicationChanges() {
-			log.KvDistribution.VEventf(ctx, 2, "mma: adding s%s with change=%s", chg.Target.StoreID, chg.ChangeType)
 		}
 	default:
 		panic("unexpected change type")

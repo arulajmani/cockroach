@@ -27,7 +27,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
-	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
@@ -927,8 +926,8 @@ func TestProcessorTxnPushAttempt(t *testing.T) {
 	})
 }
 
-// TestProcessorTxnPushDisabled tests that the TxnPushNotifier doesn't send txn
-// push notifications when disabled.
+// TestProcessorTxnPushDisabled tests that processors don't attempt txn pushes
+// when disabled.
 func TestProcessorTxnPushDisabled(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 
@@ -951,6 +950,12 @@ func TestProcessorTxnPushDisabled(t *testing.T) {
 	PushTxnsEnabled.Override(ctx, &st.SV, false)
 
 	// Set up a txn pusher and processor that errors on any pushes.
+	//
+	// TODO(kv): We don't test the scheduled processor here, since the setting
+	// instead controls the Store.startRangefeedTxnPushNotifier() loop which sits
+	// outside of the processor and can't be tested with this test harness. Write
+	// a new test when the legacy processor is removed and the scheduled processor
+	// is used by default.
 	var tp testTxnPusher
 	tp.mockPushTxns(func(ctx context.Context, txns []enginepb.TxnMeta, ts hlc.Timestamp) ([]*roachpb.Transaction, bool, error) {
 		err := errors.Errorf("unexpected txn push for txns=%v ts=%s", txns, ts)
@@ -959,15 +964,8 @@ func TestProcessorTxnPushDisabled(t *testing.T) {
 	})
 
 	p, h, stopper := newTestProcessor(t, withSettings(st), withPusher(&tp),
-		withPushTxnsIntervalAge(time.Millisecond))
+		withPushTxnsIntervalAge(pushInterval, time.Millisecond))
 	defer stopper.Stop(ctx)
-
-	notifier := NewTxnPushNotifier(
-		pushInterval,
-		st, h.rawScheduler,
-		func(f func(i int64)) { f(p.ID()) },
-	)
-	require.NoError(t, notifier.Start(ctx, stopper))
 
 	// Move the resolved ts forward to just before the txn timestamp.
 	rts := ts.Add(-1, 0)
@@ -1581,55 +1579,6 @@ func TestProcessorContextCancellation(t *testing.T) {
 		case <-pushDoneC:
 		case <-time.After(3 * time.Second):
 			t.Fatal("txn pusher did not exit")
-		}
-	})
-}
-
-// TestIntentScannerOnError tests that when a processor is given with an intent
-// scanner constructor that fails to create a scanner, the processor will fail
-// to start gracefully.
-func TestIntentScannerOnError(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-
-	ctx := context.Background()
-	stopper := stop.NewStopper()
-	defer stopper.Stop(ctx)
-
-	cfg := testConfig{
-		Config: Config{
-			RangeID:  2,
-			Stopper:  stopper,
-			Span:     roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("z")},
-			Metrics:  NewMetrics(),
-			Priority: true,
-		},
-	}
-	sch := NewScheduler(SchedulerConfig{
-		Workers:         1,
-		PriorityWorkers: 1,
-		Metrics:         NewSchedulerMetrics(time.Second),
-	})
-	require.NoError(t, sch.Start(ctx, stopper))
-	cfg.Scheduler = sch
-
-	s := NewProcessor(cfg.Config)
-	erroringScanConstructor := func() (IntentScanner, error) {
-		return nil, errors.New("scanner error")
-	}
-	err := s.Start(stopper, erroringScanConstructor)
-	require.ErrorContains(t, err, "scanner error")
-
-	// The processor should be stopped eventually.
-	p := (s).(*ScheduledProcessor)
-	testutils.SucceedsSoon(t, func() error {
-		select {
-		case <-p.stoppedC:
-			_, ok := sch.shards[shardIndex(p.ID(), len(sch.shards), p.Priority)].procs[p.ID()]
-			require.False(t, ok)
-			require.False(t, sch.priorityIDs.Contains(p.ID()))
-			return nil
-		default:
-			return errors.New("processor not stopped")
 		}
 	})
 }

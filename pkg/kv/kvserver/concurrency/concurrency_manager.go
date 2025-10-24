@@ -103,17 +103,6 @@ var DiscoveredLocksThresholdToConsultTxnStatusCache = settings.RegisterIntSettin
 	settings.NonNegativeInt,
 )
 
-// DefaultLockTableSize controls the default upper bound on the number of locks
-// in a lock table.
-var DefaultLockTableSize = settings.RegisterIntSetting(
-	settings.SystemOnly,
-	"kv.lock_table.default_size",
-	"the default upper bound on the number of locks in a lock table. This setting "+
-		"controls the maximum number of locks that can be held in memory by the lock table "+
-		"before it starts evicting locks to manage memory pressure.",
-	10000,
-)
-
 // BatchPushedLockResolution controls whether the lock table should allow
 // non-locking readers to defer and batch the resolution of conflicting locks
 // whose holder is known to be pending and have been pushed above the reader's
@@ -133,7 +122,7 @@ var UnreplicatedLockReliabilitySplit = settings.RegisterBoolSetting(
 	settings.SystemOnly,
 	"kv.lock_table.unreplicated_lock_reliability.split.enabled",
 	"whether the replica should attempt to keep unreplicated locks during range splits",
-	metamorphic.ConstantWithTestBool("kv.lock_table.unreplicated_lock_reliability.split.enabled", true),
+	false,
 )
 
 // UnreplicatedLockReliabilityLeaseTransfer controls whether the replica will attempt
@@ -142,7 +131,7 @@ var UnreplicatedLockReliabilityLeaseTransfer = settings.RegisterBoolSetting(
 	settings.SystemOnly,
 	"kv.lock_table.unreplicated_lock_reliability.lease_transfer.enabled",
 	"whether the replica should attempt to keep unreplicated locks during lease transfers",
-	metamorphic.ConstantWithTestBool("kv.lock_table.unreplicated_lock_reliability.lease_transfer.enabled", true),
+	metamorphic.ConstantWithTestBool("kv.lock_table.unreplicated_lock_reliability.lease_transfer.enabled", false),
 )
 
 // UnreplicatedLockReliabilityMerge controls whether the replica will attempt to
@@ -151,7 +140,7 @@ var UnreplicatedLockReliabilityMerge = settings.RegisterBoolSetting(
 	settings.SystemOnly,
 	"kv.lock_table.unreplicated_lock_reliability.merge.enabled",
 	"whether the replica should attempt to keep unreplicated locks during range merges",
-	metamorphic.ConstantWithTestBool("kv.lock_table.unreplicated_lock_reliability.merge.enabled", true),
+	metamorphic.ConstantWithTestBool("kv.lock_table.unreplicated_lock_reliability.merge.enabled", false),
 )
 
 var MaxLockFlushSize = settings.RegisterByteSizeSetting(
@@ -210,7 +199,7 @@ type Config struct {
 
 func (c *Config) initDefaults() {
 	if c.MaxLockTableSize == 0 {
-		c.MaxLockTableSize = DefaultLockTableSize.Get(&c.Settings.SV)
+		c.MaxLockTableSize = defaultLockTableSize
 	}
 }
 
@@ -770,9 +759,9 @@ func (m *managerImpl) TestingTxnWaitQueue() *txnwait.Queue {
 	return m.twq.(*txnwait.Queue)
 }
 
-// SetMaxLockTableSize implements the LockManager interface.
-func (m *managerImpl) SetMaxLockTableSize(maxLocks int64) {
-	m.lt.SetMaxLockTableSize(maxLocks)
+// TestingSetMaxLocks implements the TestingAccessor interface.
+func (m *managerImpl) TestingSetMaxLocks(maxLocks int64) {
+	m.lt.TestingSetMaxLocks(maxLocks)
 }
 
 func (r *Request) isSingle(m kvpb.Method) bool {

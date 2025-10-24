@@ -289,10 +289,8 @@ func (r *logicalReplicationResumer) ingest(
 			settings:              &execCfg.Settings.SV,
 			job:                   r.job,
 			frontierUpdates:       heartbeatSender.FrontierUpdates,
-			rangeStats: replicationutils.NewAggregateRangeStatsCollector(
-				planInfo.writeProcessorCount,
-			),
-			r: r,
+			rangeStats:            newRangeStatsCollector(planInfo.writeProcessorCount),
+			r:                     r,
 		}
 		rowResultWriter := sql.NewCallbackResultWriter(rh.handleRow)
 		distSQLReceiver := sql.MakeDistSQLReceiver(
@@ -456,11 +454,9 @@ type logicalReplicationPlanner struct {
 }
 
 type logicalReplicationPlanInfo struct {
-	sourceSpans      []roachpb.Span
-	partitionPgUrls  []string
-	destTableBySrcID map[descpb.ID]dstTableMetadata
-	// Number of processors writing data on the destination cluster (offline or
-	// otherwise).
+	sourceSpans         []roachpb.Span
+	partitionPgUrls     []string
+	destTableBySrcID    map[descpb.ID]dstTableMetadata
 	writeProcessorCount int
 }
 
@@ -740,7 +736,6 @@ func (p *logicalReplicationPlanner) planOfflineInitialScan(
 				SQLInstanceID: instanceID,
 				Core:          execinfrapb.ProcessorCoreUnion{LogicalReplicationOfflineScan: &spec},
 			})
-			info.writeProcessorCount++
 		}
 	}
 
@@ -768,7 +763,7 @@ type rowHandler struct {
 	job                   *jobs.Job
 	frontierUpdates       chan hlc.Timestamp
 
-	rangeStats replicationutils.AggregateRangeStatsCollector
+	rangeStats rangeStatsByProcessorID
 
 	lastPartitionUpdate time.Time
 

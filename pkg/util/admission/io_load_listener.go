@@ -747,7 +747,7 @@ func (io *ioLoadListener) adjustTokens(ctx context.Context, metrics StoreMetrics
 		io.diskWriteTokens = tokens.writeByteTokens
 		io.diskWriteTokensAllocated = 0
 		io.diskReadTokens = tokens.readByteTokens
-		io.diskReadTokensAllocated = 0
+		io.diskWriteTokensAllocated = 0
 	}
 	io.diskBandwidthLimiter.unlimitedTokensOverride = false
 	if metrics.DiskStats.ProvisionedBandwidth == 0 ||
@@ -1392,7 +1392,7 @@ func (res adjustTokensResult) SafeFormat(p redact.SafePrinter, _ rune) {
 			if res.aux.usedCompactionTokensLowerBound {
 				lowerBoundBoolStr = "(used token lower bound)"
 			}
-			p.Printf(" due to L0 growth%s", redact.SafeString(lowerBoundBoolStr))
+			p.Printf(" due to L0 growth%s", lowerBoundBoolStr)
 		case flushTokenKind:
 			p.Printf(" due to memtable flush (multiplier %.3f)", res.flushUtilTargetFraction)
 		}

@@ -203,7 +203,7 @@ func TestLockTableBasic(t *testing.T) {
 				)
 				ltImpl.enabled = true
 				ltImpl.enabledSeq = 1
-				ltImpl.lockTableLimitsMu.minKeysLocked = 0
+				ltImpl.minKeysLocked = 0
 				lt = maybeWrapInVerifyingLockTable(ltImpl)
 				txnsByName = make(map[string]*enginepb.TxnMeta)
 				txnCounter = uint128.FromInts(0, 0)
@@ -314,7 +314,6 @@ func TestLockTableBasic(t *testing.T) {
 				if d.HasArg("skip-locked") {
 					waitPolicy = lock.WaitPolicy_SkipLocked
 				}
-				updateRetainedTxn := !d.HasArg("no-update-retained-txn")
 				var maxLockWaitQueueLength int
 				if d.HasArg("max-lock-wait-queue-length") {
 					d.ScanArgs(t, "max-lock-wait-queue-length", &maxLockWaitQueueLength)
@@ -334,17 +333,11 @@ func TestLockTableBasic(t *testing.T) {
 				if txnMeta != nil {
 					// Update the transaction's timestamp, if necessary. The transaction
 					// may have needed to move its timestamp for any number of reasons.
-					if updateRetainedTxn {
-						txnMeta.WriteTimestamp = ts
-					}
+					txnMeta.WriteTimestamp = ts
 					ba.Txn = &roachpb.Transaction{
 						TxnMeta:       *txnMeta,
 						ReadTimestamp: ts,
 					}
-					if !updateRetainedTxn {
-						ba.Txn.WriteTimestamp = ts
-					}
-
 					req.Txn = ba.Txn
 				}
 				requestsByName[reqName] = req
@@ -895,7 +888,7 @@ func TestLockTableMaxLocks(t *testing.T) {
 		5, roachpb.RangeID(3), hlc.NewClockForTesting(nil), cluster.MakeTestingClusterSettings(),
 		m.LocksShedDueToMemoryLimit, m.NumLockShedDueToMemoryLimitEvents,
 	)
-	lt.lockTableLimitsMu.minKeysLocked = 0
+	lt.minKeysLocked = 0
 	lt.enabled = true
 	var keys []roachpb.Key
 	var guards []lockTableGuard
@@ -990,7 +983,7 @@ func TestLockTableMaxLocks(t *testing.T) {
 	lt.Dequeue(guards[4])
 	lt.Dequeue(guards[5])
 	// Bump up the enforcement interval manually.
-	lt.lockTableLimitsMu.lockAddMaxLocksCheckInterval = 2
+	lt.locks.lockAddMaxLocksCheckInterval = 2
 	// Add another discovered lock.
 	added, err = lt.AddDiscoveredLock(
 		newLock(&txnMeta, keys[9*20+12], lock.Intent),
@@ -1015,8 +1008,8 @@ func TestLockTableMaxLocks(t *testing.T) {
 	require.Equal(t, int64(100), m.LocksShedDueToMemoryLimit.Count())
 	require.Equal(t, int64(69), m.NumLockShedDueToMemoryLimitEvents.Count())
 	// Bump down the enforcement interval manually, and bump up minKeysLocked.
-	lt.lockTableLimitsMu.lockAddMaxLocksCheckInterval = 1
-	lt.lockTableLimitsMu.minKeysLocked = 2
+	lt.locks.lockAddMaxLocksCheckInterval = 1
+	lt.minKeysLocked = 2
 	// Three more guards dequeued. Now only 1 lock is notRemovable.
 	lt.Dequeue(guards[6])
 	lt.Dequeue(guards[7])
@@ -1046,7 +1039,7 @@ func TestLockTableMaxLocks(t *testing.T) {
 	require.Equal(t, int64(104), m.LocksShedDueToMemoryLimit.Count())
 	require.Equal(t, int64(70), m.NumLockShedDueToMemoryLimitEvents.Count())
 	// Restore minKeysLocked to 0.
-	lt.lockTableLimitsMu.minKeysLocked = 0
+	lt.minKeysLocked = 0
 	// Add locks to push us over 5 locks.
 	for i := 16; i < 20; i++ {
 		added, err = lt.AddDiscoveredLock(
@@ -1071,7 +1064,7 @@ func TestLockTableMaxLocksWithMultipleNotRemovableRefs(t *testing.T) {
 		2, roachpb.RangeID(3), hlc.NewClockForTesting(nil), cluster.MakeTestingClusterSettings(),
 		m.LocksShedDueToMemoryLimit, m.NumLockShedDueToMemoryLimitEvents,
 	)
-	lt.lockTableLimitsMu.minKeysLocked = 0
+	lt.minKeysLocked = 0
 	lt.enabled = true
 	var keys []roachpb.Key
 	var guards []lockTableGuard

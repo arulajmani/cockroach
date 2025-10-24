@@ -621,7 +621,7 @@ validate CHECK constraint crdb_internal_j_shard_3_auto_not_null in table #104
 validate forward indexes [4] in table #104
 commit transaction #9
 begin transaction #10
-## PostCommitPhase stage 8 of 16 with 20 MutationType ops
+## PostCommitPhase stage 8 of 16 with 22 MutationType ops
 upsert descriptor #104
   ...
        fromHashShardedColumn: true
@@ -635,46 +635,31 @@ upsert descriptor #104
      columns:
      - computeExpr: mod(fnv32(md5("crdb_internal.datums_to_bytes"(i))), 16:::INT8)
   ...
-       vecConfig: {}
-       version: 4
+     id: 104
+     indexes:
+  -  - createdAtNanos: "1640995200000000000"
   +  - constraintId: 5
   +    createdAtNanos: "1640998800000000000"
-  +    createdExplicitly: true
-  +    foreignKey: {}
-  +    geoConfig: {}
-  +    hideForPrimaryKeyRecreate: true
+       createdExplicitly: true
+       foreignKey: {}
+       geoConfig: {}
+  -    id: 2
   +    id: 4
-  +    interleave: {}
-  +    invisibility: 1
-  +    keyColumnDirections:
-  +    - ASC
-  +    - ASC
-  +    - ASC
-  +    keyColumnIds:
-  +    - 4
-  +    - 2
-  +    - 3
-  +    keyColumnNames:
-  +    - crdb_internal_i_j_shard_16
-  +    - i
-  +    - j
-  +    keySuffixColumnIds:
+       interleave: {}
+       keyColumnDirections:
+  ...
+       - j
+       keySuffixColumnIds:
+  -    - 1
   +    - 5
-  +    name: crdb_internal_t_i_j_idx_recreated
-  +    notVisible: true
-  +    partitioning: {}
-  +    sharded:
-  +      columnNames:
-  +      - i
-  +      - j
-  +      isSharded: true
-  +      name: crdb_internal_i_j_shard_16
-  +      shardBuckets: 16
+       name: t_i_j_idx
+       partitioning: {}
+  ...
+         name: crdb_internal_i_j_shard_16
+         shardBuckets: 16
   +    storeColumnNames: []
-  +    vecConfig: {}
-  +    version: 4
-     modificationTime: {}
-     mutations:
+       vecConfig: {}
+       version: 4
   ...
          id: 5
          name: crdb_internal_j_shard_3
@@ -773,7 +758,6 @@ upsert descriptor #104
   +      vecConfig: {}
   +      version: 4
        mutationId: 1
-  -    state: WRITE_ONLY
   +    state: BACKFILLING
   +  - direction: ADD
   +    index:
@@ -810,8 +794,42 @@ upsert descriptor #104
   +      version: 4
   +    mutationId: 1
   +    state: DELETE_ONLY
+  +  - direction: DROP
+  +    index:
+  +      createdAtNanos: "1640995200000000000"
+  +      createdExplicitly: true
+  +      foreignKey: {}
+  +      geoConfig: {}
+  +      id: 2
+  +      interleave: {}
+  +      keyColumnDirections:
+  +      - ASC
+  +      - ASC
+  +      - ASC
+  +      keyColumnIds:
+  +      - 4
+  +      - 2
+  +      - 3
+  +      keyColumnNames:
+  +      - crdb_internal_i_j_shard_16
+  +      - i
+  +      - j
+  +      keySuffixColumnIds:
+  +      - 1
+  +      name: t_i_j_idx
+  +      partitioning: {}
+  +      sharded:
+  +        columnNames:
+  +        - i
+  +        - j
+  +        isSharded: true
+  +        name: crdb_internal_i_j_shard_16
+  +        shardBuckets: 16
+  +      vecConfig: {}
+  +      version: 4
+  +    mutationId: 1
+       state: WRITE_ONLY
      name: t
-     nextColumnId: 6
   ...
        time: {}
      unexposedParentSchemaId: 101
@@ -829,8 +847,8 @@ upsert descriptor #104
        mutationId: 1
   -    state: DELETE_ONLY
   +    state: WRITE_ONLY
-     name: t
-     nextColumnId: 6
+     - direction: DROP
+       index:
   ...
        time: {}
      unexposedParentSchemaId: 101
@@ -900,8 +918,8 @@ upsert descriptor #104
        mutationId: 1
   -    state: WRITE_ONLY
   +    state: DELETE_ONLY
-     name: t
-     nextColumnId: 6
+     - direction: DROP
+       index:
   ...
        time: {}
      unexposedParentSchemaId: 101
@@ -915,7 +933,7 @@ begin transaction #17
 validate forward indexes [6] in table #104
 commit transaction #17
 begin transaction #18
-## PostCommitPhase stage 16 of 16 with 10 MutationType ops
+## PostCommitPhase stage 16 of 16 with 8 MutationType ops
 upsert descriptor #104
   ...
            statement: ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (j) USING HASH WITH ('bucket_count' = 3)
@@ -924,152 +942,81 @@ upsert descriptor #104
        targetRanks: <redacted>
        targets: <redacted>
   ...
-     id: 104
-     indexes:
-  -  - createdAtNanos: "1640995200000000000"
-  +  - constraintId: 5
-  +    createdAtNanos: "1640998800000000000"
-       createdExplicitly: true
-       foreignKey: {}
-       geoConfig: {}
-  -    id: 2
-  +    id: 4
-       interleave: {}
-       keyColumnDirections:
-  ...
-       - j
-       keySuffixColumnIds:
-  -    - 1
-  +    - 5
-       name: t_i_j_idx
-       partitioning: {}
-  ...
-         name: crdb_internal_i_j_shard_16
-         shardBuckets: 16
-  +    storeColumnNames: []
        vecConfig: {}
        version: 4
-  -  - constraintId: 5
   +  - constraintId: 7
-       createdAtNanos: "1640998800000000000"
-       createdExplicitly: true
-       foreignKey: {}
-       geoConfig: {}
-  -    hideForPrimaryKeyRecreate: true
-  -    id: 4
+  +    createdAtNanos: "1640998800000000000"
+  +    createdExplicitly: true
+  +    foreignKey: {}
+  +    geoConfig: {}
   +    id: 6
-       interleave: {}
-  -    invisibility: 1
-       keyColumnDirections:
-       - ASC
-       - ASC
-  -    - ASC
-       keyColumnIds:
-  -    - 4
+  +    interleave: {}
+  +    keyColumnDirections:
+  +    - ASC
+  +    - ASC
+  +    keyColumnIds:
   +    - 1
-       - 2
-  -    - 3
-       keyColumnNames:
-  -    - crdb_internal_i_j_shard_16
+  +    - 2
+  +    keyColumnNames:
   +    - crdb_internal_i_shard_16
-       - i
-  -    - j
-       keySuffixColumnIds:
-       - 5
-  -    name: crdb_internal_t_i_j_idx_recreated
-  -    notVisible: true
+  +    - i
+  +    keySuffixColumnIds:
+  +    - 5
   +    - 3
   +    name: t_i_key
-       partitioning: {}
-       sharded:
-         columnNames:
-         - i
-  -      - j
-         isSharded: true
-  -      name: crdb_internal_i_j_shard_16
+  +    partitioning: {}
+  +    sharded:
+  +      columnNames:
+  +      - i
+  +      isSharded: true
   +      name: crdb_internal_i_shard_16
-         shardBuckets: 16
-       storeColumnNames: []
+  +      shardBuckets: 16
+  +    storeColumnNames: []
   +    unique: true
-       vecConfig: {}
-       version: 4
+  +    vecConfig: {}
+  +    version: 4
+     modificationTime: {}
+     mutations:
   ...
        mutationId: 1
        state: DELETE_ONLY
   -  - direction: ADD
-  +  - direction: DROP
-       index:
+  -    index:
   -      constraintId: 9
-  +      constraintId: 10
-         createdExplicitly: true
-         encodingType: 1
-         foreignKey: {}
-         geoConfig: {}
-  -      id: 8
-  +      id: 9
-         interleave: {}
-         keyColumnDirections:
-  ...
-         - crdb_internal_j_shard_3
-         - j
-  -      name: crdb_internal_index_8_name_placeholder
-  +      name: crdb_internal_index_9_name_placeholder
-         partitioning: {}
-         sharded:
-  ...
-         - i
-         unique: true
-  +      useDeletePreservingEncoding: true
-         vecConfig: {}
-         version: 4
-       mutationId: 1
-  -    state: WRITE_ONLY
-  +    state: DELETE_ONLY
-     - direction: DROP
-       index:
-  -      constraintId: 10
-  +      constraintId: 8
-         createdExplicitly: true
+  -      createdExplicitly: true
   -      encodingType: 1
-         foreignKey: {}
-         geoConfig: {}
-  -      id: 9
-  +      id: 7
-         interleave: {}
-         keyColumnDirections:
-  ...
-         - ASC
-         keyColumnIds:
-  +      - 1
-  +      - 2
-  +      keyColumnNames:
-  +      - crdb_internal_i_shard_16
-  +      - i
-  +      keySuffixColumnIds:
-         - 5
-         - 3
+  -      foreignKey: {}
+  -      geoConfig: {}
+  -      id: 8
+  -      interleave: {}
+  -      keyColumnDirections:
+  -      - ASC
+  -      - ASC
+  -      keyColumnIds:
+  -      - 5
+  -      - 3
   -      keyColumnNames:
   -      - crdb_internal_j_shard_3
   -      - j
-  -      name: crdb_internal_index_9_name_placeholder
-  +      name: crdb_internal_index_7_name_placeholder
-         partitioning: {}
-         sharded:
-           columnNames:
+  -      name: crdb_internal_index_8_name_placeholder
+  -      partitioning: {}
+  -      sharded:
+  -        columnNames:
   -        - j
-  +        - i
-           isSharded: true
+  -        isSharded: true
   -        name: crdb_internal_j_shard_3
   -        shardBuckets: 3
   -      storeColumnIds:
   -      - 2
   -      storeColumnNames:
   -      - i
-  +        name: crdb_internal_i_shard_16
-  +        shardBuckets: 16
-  +      storeColumnNames: []
-         unique: true
-         useDeletePreservingEncoding: true
+  -      unique: true
+  -      vecConfig: {}
+  -      version: 4
+  -    mutationId: 1
+  -    state: WRITE_ONLY
+     - direction: DROP
+       index:
   ...
        mutationId: 1
        state: DELETE_ONLY
@@ -1078,37 +1025,30 @@ upsert descriptor #104
        index:
   -      constraintId: 7
   -      createdAtNanos: "1640998800000000000"
-  -      createdExplicitly: true
-  +      constraintId: 1
-  +      createdAtNanos: "1640995200000000000"
-  +      encodingType: 1
+  +      constraintId: 8
+         createdExplicitly: true
          foreignKey: {}
          geoConfig: {}
   -      id: 6
-  +      id: 1
+  +      id: 7
          interleave: {}
          keyColumnDirections:
   ...
-         - crdb_internal_i_shard_16
-         - i
-  -      keySuffixColumnIds:
-  -      - 5
-  -      - 3
+         - 5
+         - 3
   -      name: t_i_key
-  +      name: crdb_internal_index_1_name_placeholder
+  +      name: crdb_internal_index_7_name_placeholder
          partitioning: {}
          sharded:
   ...
-           name: crdb_internal_i_shard_16
-           shardBuckets: 16
-  -      storeColumnNames: []
-  +      storeColumnIds:
-  +      - 3
-  +      storeColumnNames:
-  +      - j
+         storeColumnNames: []
          unique: true
+  +      useDeletePreservingEncoding: true
          vecConfig: {}
-  ...
+         version: 4
+       mutationId: 1
+  -    state: WRITE_ONLY
+  +    state: DELETE_ONLY
      - direction: DROP
        index:
   -      constraintId: 8
@@ -1156,8 +1096,51 @@ upsert descriptor #104
        mutationId: 1
   -    state: DELETE_ONLY
   +    state: WRITE_ONLY
-     name: t
-     nextColumnId: 6
+     - direction: DROP
+       index:
+  +      constraintId: 1
+         createdAtNanos: "1640995200000000000"
+  -      createdExplicitly: true
+  +      encodingType: 1
+         foreignKey: {}
+         geoConfig: {}
+  -      id: 2
+  +      id: 1
+         interleave: {}
+         keyColumnDirections:
+         - ASC
+         - ASC
+  -      - ASC
+         keyColumnIds:
+  -      - 4
+  +      - 1
+         - 2
+  -      - 3
+         keyColumnNames:
+  -      - crdb_internal_i_j_shard_16
+  +      - crdb_internal_i_shard_16
+         - i
+  -      - j
+  -      keySuffixColumnIds:
+  -      - 1
+  -      name: t_i_j_idx
+  +      name: crdb_internal_index_1_name_placeholder
+         partitioning: {}
+         sharded:
+           columnNames:
+           - i
+  -        - j
+           isSharded: true
+  -        name: crdb_internal_i_j_shard_16
+  +        name: crdb_internal_i_shard_16
+           shardBuckets: 16
+  +      storeColumnIds:
+  +      - 3
+  +      storeColumnNames:
+  +      - j
+  +      unique: true
+         vecConfig: {}
+         version: 4
   ...
      parentId: 100
      primaryIndex:
@@ -1368,15 +1351,8 @@ upsert descriptor #104
   -    state: DELETE_ONLY
   -  - direction: DROP
   -    index:
-         constraintId: 1
          createdAtNanos: "1640995200000000000"
-  ...
-         version: 4
-       mutationId: 1
-  -    state: WRITE_ONLY
-  +    state: DELETE_ONLY
-     - direction: DROP
-       index:
+         createdExplicitly: true
   ...
          keySuffixColumnIds:
          - 1
@@ -1384,6 +1360,13 @@ upsert descriptor #104
   +      name: crdb_internal_index_2_name_placeholder
          partitioning: {}
          sharded:
+  ...
+         version: 4
+       mutationId: 1
+  -    state: WRITE_ONLY
+  +    state: DELETE_ONLY
+     - direction: DROP
+       index:
   ...
          version: 4
        mutationId: 1
@@ -1432,41 +1415,6 @@ upsert descriptor #104
   -  mutations:
   -  - direction: DROP
   -    index:
-  -      constraintId: 1
-  -      createdAtNanos: "1640995200000000000"
-  -      encodingType: 1
-  -      foreignKey: {}
-  -      geoConfig: {}
-  -      id: 1
-  -      interleave: {}
-  -      keyColumnDirections:
-  -      - ASC
-  -      - ASC
-  -      keyColumnIds:
-  -      - 1
-  -      - 2
-  -      keyColumnNames:
-  -      - crdb_internal_i_shard_16
-  -      - i
-  -      name: crdb_internal_index_1_name_placeholder
-  -      partitioning: {}
-  -      sharded:
-  -        columnNames:
-  -        - i
-  -        isSharded: true
-  -        name: crdb_internal_i_shard_16
-  -        shardBuckets: 16
-  -      storeColumnIds:
-  -      - 3
-  -      storeColumnNames:
-  -      - j
-  -      unique: true
-  -      vecConfig: {}
-  -      version: 4
-  -    mutationId: 1
-  -    state: DELETE_ONLY
-  -  - direction: DROP
-  -    index:
   -      createdAtNanos: "1640995200000000000"
   -      createdExplicitly: true
   -      foreignKey: {}
@@ -1496,6 +1444,41 @@ upsert descriptor #104
   -        isSharded: true
   -        name: crdb_internal_i_j_shard_16
   -        shardBuckets: 16
+  -      vecConfig: {}
+  -      version: 4
+  -    mutationId: 1
+  -    state: DELETE_ONLY
+  -  - direction: DROP
+  -    index:
+  -      constraintId: 1
+  -      createdAtNanos: "1640995200000000000"
+  -      encodingType: 1
+  -      foreignKey: {}
+  -      geoConfig: {}
+  -      id: 1
+  -      interleave: {}
+  -      keyColumnDirections:
+  -      - ASC
+  -      - ASC
+  -      keyColumnIds:
+  -      - 1
+  -      - 2
+  -      keyColumnNames:
+  -      - crdb_internal_i_shard_16
+  -      - i
+  -      name: crdb_internal_index_1_name_placeholder
+  -      partitioning: {}
+  -      sharded:
+  -        columnNames:
+  -        - i
+  -        isSharded: true
+  -        name: crdb_internal_i_shard_16
+  -        shardBuckets: 16
+  -      storeColumnIds:
+  -      - 3
+  -      storeColumnNames:
+  -      - j
+  -      unique: true
   -      vecConfig: {}
   -      version: 4
   -    mutationId: 1

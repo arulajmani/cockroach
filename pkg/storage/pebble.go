@@ -198,22 +198,6 @@ var UnhealthyWriteDuration = settings.RegisterDurationSetting(
 	20*time.Second,
 	settings.WithPublic)
 
-// useDeprecatedCompensatedScore is a temporary setting that provides a
-// mechanism for reverting Pebble's compaction picking heuristic to the previous
-// (25.3 and earlier) behavior for deciding when a level is eligible for
-// compaction. See the pebble.Options Experimental UseDeprecatedCompensatedScore
-// setting for details.
-//
-// We anticipate not needing to use this setting, but it's provided as an escape
-// hatch in case the heuristic change has an unforeseen impact on some
-// workloads.
-var useDeprecatedCompensatedScore = settings.RegisterBoolSetting(
-	settings.ApplicationLevel,
-	"storage.deprecated_compensated_score.enabled",
-	"if enabled, this setting reverts the storage engine's compaction picking heuristic",
-	false,
-)
-
 // SSTableCompressionProfile is an enumeration of compression algorithms
 // available for compressing SSTables (e.g. for backup or transport).
 type SSTableCompressionProfile int64
@@ -299,9 +283,6 @@ const (
 
 	// StoreCompressionGood uses pebble.DBCompressionGood.
 	StoreCompressionGood StoreCompressionSetting = 7
-
-	// StoreCompressionFast uses pebble.DBCompressionFast.
-	StoreCompressionFast StoreCompressionSetting = 8
 )
 
 var storeCompressionSettingToString = map[StoreCompressionSetting]string{
@@ -310,7 +291,6 @@ var storeCompressionSettingToString = map[StoreCompressionSetting]string{
 	StoreCompressionNone:   "none",
 	StoreCompressionZstd:   "zstd",
 
-	StoreCompressionFast:     "fast",
 	StoreCompressionFastest:  "fastest",
 	StoreCompressionBalanced: "balanced",
 	StoreCompressionGood:     "good",
@@ -325,7 +305,6 @@ var storeCompressionSettings = map[StoreCompressionSetting]pebble.DBCompressionS
 	StoreCompressionFastest:  pebble.DBCompressionFastest,
 	StoreCompressionBalanced: pebble.DBCompressionBalanced,
 	StoreCompressionGood:     pebble.DBCompressionGood,
-	StoreCompressionFast:     pebble.DBCompressionFast,
 }
 
 // String implements fmt.Stringer for StoreCompressionSetting.
@@ -359,7 +338,7 @@ const compressionSettingClass = settings.SystemVisible
 var CompressionAlgorithmStorage = settings.RegisterEnumSetting[StoreCompressionSetting](
 	compressionSettingClass,
 	"storage.sstable.compression_algorithm",
-	`determines the compression algorithm to use for Pebble stores`,
+	`determines the compression algorithm to use when compressing sstable data blocks for use in a Pebble store (balanced,good are experimental);`,
 	// TODO(radu,jackson): use a metamorphic constant.
 	StoreCompressionFastest.String(),
 	storeCompressionSettingToString,
@@ -609,10 +588,6 @@ func DefaultPebbleOptions() *pebble.Options {
 
 	opts.Experimental.SpanPolicyFunc = spanPolicyFunc
 	opts.Experimental.UserKeyCategories = userKeyCategories
-
-	// Every 5 minutes, log iterators that have been open for more than 1 minute.
-	opts.Experimental.IteratorTracking.PollInterval = 5 * time.Minute
-	opts.Experimental.IteratorTracking.MaxAge = time.Minute
 
 	opts.Levels[0] = pebble.LevelOptions{
 		BlockSize:      32 << 10,  // 32 KB
@@ -962,11 +937,6 @@ func newPebble(ctx context.Context, cfg engineConfig) (p *Pebble, err error) {
 	cfg.opts.TargetByteDeletionRate = func() int {
 		return int(baselineDeletionRate.Get(&cfg.settings.SV))
 	}
-	if cfg.opts.Experimental.UseDeprecatedCompensatedScore == nil {
-		cfg.opts.Experimental.UseDeprecatedCompensatedScore = func() bool {
-			return useDeprecatedCompensatedScore.Get(&cfg.settings.SV)
-		}
-	}
 
 	cfg.opts.EnsureDefaults()
 
@@ -975,11 +945,9 @@ func newPebble(ctx context.Context, cfg engineConfig) (p *Pebble, err error) {
 	logCtx := logtags.WithTags(context.Background(), logtags.FromContext(ctx))
 	// The store id, could not necessarily be determined when this function
 	// is called. Therefore, we use a container for the store id.
-	tags := logtags.BuildBuffer()
 	storeIDContainer := &base.StoreIDContainer{}
-	tags.Add("s", storeIDContainer)
-	tags.Add("pebble", nil)
-	logCtx = logtags.AddTags(logCtx, tags.Finish())
+	logCtx = logtags.AddTag(logCtx, "s", storeIDContainer)
+	logCtx = logtags.AddTag(logCtx, "pebble", nil)
 
 	cfg.opts.Local.ReadaheadConfig = objstorageprovider.NewReadaheadConfig()
 	updateReadaheadFn := func(ctx context.Context) {
@@ -2822,8 +2790,11 @@ func (p *pebbleReadOnly) ConsistentIterators() bool {
 // PinEngineStateForIterators implements the Engine interface.
 func (p *pebbleReadOnly) PinEngineStateForIterators(readCategory fs.ReadCategory) error {
 	if p.iter == nil {
-		o := makeIterOptions(readCategory, p.durability)
-		iter, err := p.parent.db.NewIter(&o)
+		o := &pebble.IterOptions{Category: readCategory.PebbleCategory()}
+		if p.durability == GuaranteedDurability {
+			o.OnlyReadGuaranteedDurable = true
+		}
+		iter, err := p.parent.db.NewIter(o)
 		if err != nil {
 			return err
 		}

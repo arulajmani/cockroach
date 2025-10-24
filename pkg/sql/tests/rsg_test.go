@@ -61,17 +61,6 @@ func verifyFormat(sql string) error {
 		// Cannot serialize a statement list without parsing it.
 		return nil //nolint:returnerrcheck
 	}
-	for _, stmt := range stmts {
-		if _, ok := stmt.AST.(*tree.DoBlock); ok {
-			// We currently don't handle well identifiers with double quotes in
-			// PLpgSQL blocks, so it's likely that this function will fail for
-			// this statement, thus, we skip the check if we see a DO block
-			// (which can only be a top-level AST node).
-			// TODO(#126727): remove this when double-quoted identifiers are
-			// fixed.
-			return nil
-		}
-	}
 	formattedSQL := stmts.StringWithFlags(tree.FmtShowPasswords)
 	formattedStmts, err := parser.Parse(formattedSQL)
 	if err != nil {
@@ -640,18 +629,12 @@ var ignoredErrorPatterns = []string{
 	"AS OF SYSTEM TIME: timestamp before 1970-01-01T00:00:00Z is invalid",
 	"BACKUP for requested time  needs option 'revision_history'",
 	"RESTORE timestamp: supplied backups do not cover requested time",
-	"a partial index that does not contain all the rows needed to execute this query",
-	"routine reached recursion depth limit",
-	"RETURN cannot have a parameter in a procedure",
-	"is not a known variable",
-	"could not produce a query plan conforming to the",
 
 	// Numeric conditions
 	"exponent out of range",
 	"result out of range",
 	"argument out of range",
 	"integer out of range",
-	"OID out of range",
 	"invalid operation",
 	"invalid mask",
 	"cannot take square root of a negative number",
@@ -685,8 +668,7 @@ var ignoredErrorPatterns = []string{
 	"unrecognized privilege",
 	"invalid escape string",
 	"error parsing regexp",
-	"could not parse",
-	"error parsing EWKB",
+	"could not parse .* as type bytes",
 	"UUID must be exactly 16 bytes long",
 	"unsupported timespan",
 	"does not exist",

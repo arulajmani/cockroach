@@ -607,26 +607,6 @@ func userIsSuper(
 	return tree.DBool(isSuper), err
 }
 
-func userHasReplicationPrivilegeOrRoleOption(
-	ctx context.Context, p *planner, userName username.SQLUsername,
-) (tree.DBool, error) {
-	replication, err := p.UserHasGlobalPrivilegeOrRoleOption(ctx, privilege.REPLICATION, userName)
-	if err != nil {
-		return *tree.DBoolFalse, err
-	}
-
-	replicationDest, err := p.UserHasGlobalPrivilegeOrRoleOption(ctx, privilege.REPLICATIONDEST, userName)
-	if err != nil {
-		return *tree.DBoolFalse, err
-	}
-
-	replicationSrc, err := p.UserHasGlobalPrivilegeOrRoleOption(ctx, privilege.REPLICATIONSOURCE, userName)
-	if err != nil {
-		return *tree.DBoolFalse, err
-	}
-	return tree.DBool(replication || replicationDest || replicationSrc), nil
-}
-
 var pgCatalogAuthIDTable = virtualSchemaTable{
 	comment: `authorization identifiers - differs from postgres as we do not display passwords, 
 and thus do not require admin privileges for access. 
@@ -669,11 +649,6 @@ https://www.postgresql.org/docs/9.5/catalog-pg-authid.html`,
 				return err
 			}
 
-			replication, err := userHasReplicationPrivilegeOrRoleOption(ctx, p, userName)
-			if err != nil {
-				return err
-			}
-
 			return addRow(
 				h.UserOid(userName),                              // oid
 				tree.NewDName(userName.Normalized()),             // rolname
@@ -682,7 +657,7 @@ https://www.postgresql.org/docs/9.5/catalog-pg-authid.html`,
 				tree.MakeDBool(isRoot || tree.DBool(createRole)), // rolcreaterole
 				tree.MakeDBool(isRoot || tree.DBool(createDB)),   // rolcreatedb
 				tree.MakeDBool(roleCanLogin),                     // rolcanlogin.
-				tree.MakeDBool(replication),                      // rolreplication
+				tree.DBoolFalse,                                  // rolreplication
 				tree.MakeDBool(tree.DBool(bypassRLS)),            // rolbypassrls
 				negOneVal,                                        // rolconnlimit
 				passwdStarString,                                 // rolpassword
@@ -1685,19 +1660,19 @@ https://www.postgresql.org/docs/9.5/catalog-pg-depend.html`,
 	schema: vtable.PGCatalogDepend,
 	populate: func(ctx context.Context, p *planner, dbContext catalog.DatabaseDescriptor, addRow func(...tree.Datum) error) error {
 		vt := p.getVirtualTabler()
-		pgConstraintsDesc, err := vt.getVirtualTableDesc(&pgConstraintsTableName)
+		pgConstraintsDesc, err := vt.getVirtualTableDesc(&pgConstraintsTableName, p)
 		if err != nil {
 			return errors.New("could not find pg_catalog.pg_constraint")
 		}
-		pgClassDesc, err := vt.getVirtualTableDesc(&pgClassTableName)
+		pgClassDesc, err := vt.getVirtualTableDesc(&pgClassTableName, p)
 		if err != nil {
 			return errors.New("could not find pg_catalog.pg_class")
 		}
-		pgRewriteDesc, err := vt.getVirtualTableDesc(&pgRewriteTableName)
+		pgRewriteDesc, err := vt.getVirtualTableDesc(&pgRewriteTableName, p)
 		if err != nil {
 			return errors.New("could not find pg_catalog.pg_rewrite")
 		}
-		pgProcDesc, err := vt.getVirtualTableDesc(&pgProcTableName)
+		pgProcDesc, err := vt.getVirtualTableDesc(&pgProcTableName, p)
 		if err != nil {
 			return errors.New("could not find pg_catalog.pg_proc")
 		}
@@ -3047,11 +3022,6 @@ https://www.postgresql.org/docs/9.5/view-pg-roles.html`,
 					return err
 				}
 
-				replication, err := userHasReplicationPrivilegeOrRoleOption(ctx, p, userName)
-				if err != nil {
-					return err
-				}
-
 				return addRow(
 					h.UserOid(userName),                               // oid
 					tree.NewDName(userName.Normalized()),              // rolname
@@ -3061,7 +3031,7 @@ https://www.postgresql.org/docs/9.5/view-pg-roles.html`,
 					tree.MakeDBool(isSuper || tree.DBool(createDB)),   // rolcreatedb
 					tree.DBoolFalse,                                   // rolcatupdate
 					tree.MakeDBool(roleCanLogin),                      // rolcanlogin.
-					tree.MakeDBool(replication),                       // rolreplication
+					tree.DBoolFalse,                                   // rolreplication
 					negOneVal,                                         // rolconnlimit
 					passwdStarString,                                  // rolpassword
 					rolValidUntil,                                     // rolvaliduntil
@@ -3187,19 +3157,19 @@ https://www.postgresql.org/docs/9.6/catalog-pg-shdepend.html`,
 		vt := p.getVirtualTabler()
 		h := makeOidHasher()
 
-		pgClassDesc, err := vt.getVirtualTableDesc(&pgClassTableName)
+		pgClassDesc, err := vt.getVirtualTableDesc(&pgClassTableName, p)
 		if err != nil {
 			return errors.New("could not find pg_catalog.pg_class")
 		}
 		pgClassOid := tableOid(pgClassDesc.GetID())
 
-		pgAuthIDDesc, err := vt.getVirtualTableDesc(&pgAuthIDTableName)
+		pgAuthIDDesc, err := vt.getVirtualTableDesc(&pgAuthIDTableName, p)
 		if err != nil {
 			return errors.New("could not find pg_catalog.pg_authid")
 		}
 		pgAuthIDOid := tableOid(pgAuthIDDesc.GetID())
 
-		pgDatabaseDesc, err := vt.getVirtualTableDesc(&pgDatabaseTableName)
+		pgDatabaseDesc, err := vt.getVirtualTableDesc(&pgDatabaseTableName, p)
 		if err != nil {
 			return errors.New("could not find pg_catalog.pg_database")
 		}

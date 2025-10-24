@@ -19,7 +19,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/concurrency/isolation"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvstorage"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/stateloader"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/storage"
@@ -2169,7 +2169,7 @@ func TestSplitTriggerWritesInitialReplicaState(t *testing.T) {
 	gcHint := roachpb.GCHint{GCTimestamp: gcThreshold}
 	abortSpanTxnID := uuid.MakeV4()
 	as := abortspan.New(desc.RangeID)
-	sl := kvstorage.MakeStateLoader(desc.RangeID)
+	sl := stateloader.Make(desc.RangeID)
 	rec := (&MockEvalCtx{
 		ClusterSettings:        st,
 		Desc:                   &desc,
@@ -2203,21 +2203,14 @@ func TestSplitTriggerWritesInitialReplicaState(t *testing.T) {
 	err = sl.SetVersion(ctx, batch, nil, &version)
 	require.NoError(t, err)
 
-	in := SplitTriggerHelperInput{
-		LeftLease:      lease,
-		GCThreshold:    &gcThreshold,
-		GCHint:         &gcHint,
-		ReplicaVersion: version,
-	}
-
 	// Run the split trigger, which is normally run as a subset of EndTxn request
 	// evaluation.
-	_, _, err = splitTrigger(ctx, rec, batch, enginepb.MVCCStats{}, split, in, hlc.Timestamp{})
+	_, _, err = splitTrigger(ctx, rec, batch, enginepb.MVCCStats{}, split, hlc.Timestamp{})
 	require.NoError(t, err)
 
 	// Verify that range state was migrated to the right-hand side properly.
 	asRight := abortspan.New(rightDesc.RangeID)
-	slRight := kvstorage.MakeStateLoader(rightDesc.RangeID)
+	slRight := stateloader.Make(rightDesc.RangeID)
 	// The abort span should have been transferred over.
 	ok, err := asRight.Get(ctx, batch, abortSpanTxnID, &roachpb.AbortSpanEntry{})
 	require.NoError(t, err)
@@ -2251,9 +2244,9 @@ func TestSplitTriggerWritesInitialReplicaState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, version, loadedVersion)
 	expAppliedState := kvserverpb.RangeAppliedState{
-		RaftAppliedIndexTerm: kvstorage.RaftInitialLogTerm,
-		RaftAppliedIndex:     kvstorage.RaftInitialLogIndex,
-		LeaseAppliedIndex:    kvstorage.InitialLeaseAppliedIndex,
+		RaftAppliedIndexTerm: stateloader.RaftInitialLogTerm,
+		RaftAppliedIndex:     stateloader.RaftInitialLogIndex,
+		LeaseAppliedIndex:    stateloader.InitialLeaseAppliedIndex,
 	}
 	loadedAppliedState, err := slRight.LoadRangeAppliedState(ctx, batch)
 	require.NoError(t, err)

@@ -3134,9 +3134,6 @@ func (og *operationGenerator) insertRow(ctx context.Context, tx pgx.Tx) (stmt *o
 	// we will need to evaluate generated expressions below.
 	hasUniqueConstraints := false
 	hasUniqueConstraintsMutations := false
-	hasForeignKeyMutations := false
-	expectedFkViolation := false
-	potentialFkViolation := false
 	if !anyInvalidInserts {
 		// Verify if the new row may violate unique constraints by checking the
 		// constraints in the database.
@@ -3151,31 +3148,17 @@ func (og *operationGenerator) insertRow(ctx context.Context, tx pgx.Tx) (stmt *o
 		if err != nil {
 			return nil, err
 		}
-		// Verify if the new row will violate fk constraints by checking the constraints and rows
-		// in the database.
-		expectedFkViolation, potentialFkViolation, err = og.violatesFkConstraints(ctx, tx, tableName, nonGeneratedColNames, rows)
-		if err != nil {
-			return nil, err
-		}
-		// Determine if a foreign key mutation exists.
-		hasForeignKeyMutations, err = og.tableHasForeignKeyMutation(ctx, tx, tableName)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	stmt.potentialExecErrors.addAll(codesWithConditions{
 		{code: pgcode.UniqueViolation, condition: hasUniqueConstraints || hasUniqueConstraintsMutations},
-		{code: pgcode.ForeignKeyViolation, condition: expectedFkViolation || potentialFkViolation || hasForeignKeyMutations},
+		{code: pgcode.ForeignKeyViolation, condition: true},
 		{code: pgcode.NotNullViolation, condition: true},
 		{code: pgcode.CheckViolation, condition: true},
 		{code: pgcode.InsufficientPrivilege, condition: true}, // For RLS violations
 	})
-	og.expectedCommitErrors.addAll(codesWithConditions{
-		{code: pgcode.ForeignKeyViolation, condition: expectedFkViolation && !hasForeignKeyMutations},
-	})
 	og.potentialCommitErrors.addAll(codesWithConditions{
-		{code: pgcode.ForeignKeyViolation, condition: potentialFkViolation || hasForeignKeyMutations},
+		{code: pgcode.ForeignKeyViolation, condition: true},
 	})
 
 	var formattedRows []string
@@ -5592,68 +5575,4 @@ func (og *operationGenerator) findExistingTrigger(
 	}
 
 	return &triggerWithInfo, nil
-}
-
-// truncateTable generates a TRUNCATE TABLE statement.
-func (og *operationGenerator) truncateTable(ctx context.Context, tx pgx.Tx) (*opStmt, error) {
-	tbls, err := Collect(ctx, og, tx, pgx.RowTo[string],
-		`SELECT quote_ident(schema_name) || '.' || quote_ident(table_name) FROM [SHOW TABLES] WHERE type = 'table'`)
-	if err != nil {
-		return nil, err
-	}
-
-	const MaxTruncateTables = 8
-	stmt, expectedCode, err := Generate[*tree.Truncate](og.params.rng, og.produceError(), []GenerationCase{
-		{pgcode.SuccessfulCompletion, `TRUNCATE TABLE {MultipleTableNames}`},
-		{pgcode.SuccessfulCompletion, `TRUNCATE TABLE {MultipleTableNames} CASCADE`},
-		{pgcode.UndefinedTable, `TRUNCATE TABLE {TableNameDoesNotExist}`},
-		{pgcode.UndefinedTable, `TRUNCATE TABLE {TableNameDoesNotExist} CASCADE`},
-	}, template.FuncMap{
-		"MultipleTableNames": func() (string, error) {
-			selectedTables, err := PickBetween(og.params.rng, 1, MaxTruncateTables, tbls)
-			if err != nil {
-				return "", err
-			}
-			return strings.Join(selectedTables, ","), nil
-		},
-		"TableNameDoesNotExist": func() (string, error) {
-			return "TableThatDoesNotExist", nil
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	op := newOpStmt(stmt, codesWithConditions{
-		{expectedCode, true},
-	})
-
-	// If the the TRUNCATE is not cascaded, then the operation can fail
-	// if foreign key references exist.
-	if expectedCode == pgcode.SuccessfulCompletion &&
-		stmt.DropBehavior != tree.DropCascade {
-		tableSet := map[string]struct{}{}
-		fkSet := map[string]struct{}{}
-		// Gather the set of tables handled by this statement, and
-		// any foreign keys that reference these tables.
-		for _, table := range stmt.Tables {
-			tableSet[table.FQString()] = struct{}{}
-			fkReferenceTables, err := og.getTableForeignKeyReferences(ctx, tx, &table)
-			if err != nil {
-				return nil, err
-			}
-			for _, fk := range fkReferenceTables {
-				fkSet[fk.FQString()] = struct{}{}
-			}
-		}
-		// Check if any of the foreign keys that reference these
-		// tables are not truncated. If they are, then the TRUNCATE
-		// will fail with an error.
-		for fk := range fkSet {
-			if _, hasTable := tableSet[fk]; !hasTable {
-				op.expectedExecErrors.add(pgcode.FeatureNotSupported)
-				break
-			}
-		}
-	}
-	return op, nil
 }

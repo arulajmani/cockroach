@@ -187,14 +187,10 @@ func (p *planCosts) NumCustom() int {
 // average cost of the custom plans.
 func (p *planCosts) IsGenericOptimal() bool {
 	// Check cost flags and full scan counts.
-	if gc := p.generic.FullScanCount(); gc > 0 ||
-		p.generic.HasUnboundedCardinality() ||
-		p.generic.Penalties != memo.NoPenalties {
+	if gc := p.generic.FullScanCount(); gc > 0 || !p.generic.Flags.Empty() {
 		for i := 0; i < p.custom.length; i++ {
-			custom := &p.custom.costs[i]
-			if custom.Penalties < p.generic.Penalties ||
-				(p.generic.HasUnboundedCardinality() && !custom.HasUnboundedCardinality()) ||
-				gc > custom.FullScanCount() {
+			if p.custom.costs[i].Flags.Less(p.generic.Flags) ||
+				gc > p.custom.costs[i].FullScanCount() {
 				return false
 			}
 		}
@@ -222,14 +218,15 @@ func (p *planCosts) avgCustom() memo.Cost {
 // Summary returns a single-line string summarizing the custom and generic plan
 // costs and full scan counts. The format for custom costs is:
 //
-//	average_custom_cost_float [<count>]{custom_summary_0 custom_summary_1 ...}
+//	average_custom_cost [num_custom_costs]{custom_cost_0:full_scan_count ...}
 //
-// The custom costs are follow by the generic cost summary. See
-// (memo.Cost).Summary for details.
+// The format for generic costs is:
+//
+//	generic_cost:generic_full_scan_count
 //
 // A full example:
 //
-//	custom costs: 1.5 [3]{1.25:U:0u 1.75:U:0u 1.50:U:0u}, generic cost: 4.56:U:0u
+//	custom costs: 1.23 [3]{1.23:0 1.23:0 1.23:0}, generic cost: 4.56:1
 func (p *planCosts) Summary() string {
 	var sb strings.Builder
 	sb.WriteString("custom costs: ")
@@ -239,7 +236,7 @@ func (p *planCosts) Summary() string {
 			if i > 0 {
 				sb.WriteByte(' ')
 			}
-			sb.WriteString(p.custom.costs[i].Summary())
+			sb.WriteString(fmt.Sprintf("%.9g:%d", p.custom.costs[i].C, p.custom.costs[i].FullScanCount()))
 		}
 		sb.WriteByte('}')
 	} else {
@@ -247,7 +244,7 @@ func (p *planCosts) Summary() string {
 	}
 	sb.WriteString(", generic cost: ")
 	if p.HasGeneric() {
-		sb.WriteString(p.generic.Summary())
+		sb.WriteString(fmt.Sprintf("%.9g:%d", p.generic.C, p.generic.FullScanCount()))
 	} else {
 		sb.WriteString("none")
 	}

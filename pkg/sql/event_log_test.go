@@ -765,9 +765,9 @@ func TestPerfLogging(t *testing.T) {
 			db.Exec(t, tc.query)
 		}
 
-		expectedChannel := logpb.Channel_SQL_EXEC
-		if log.ShouldMigrateEvent(&s.ClusterSettings().SV) {
-			expectedChannel = tc.channel
+		expectedChannel := tc.channel
+		if !log.ChannelCompatibilityModeEnabled.Get(&s.ClusterSettings().SV) {
+			expectedChannel = logpb.Channel_SQL_EXEC
 		}
 
 		var logRe = regexp.MustCompile(tc.logRe)
