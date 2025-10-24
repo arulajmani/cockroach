@@ -57,7 +57,7 @@ func runProcessorTest(
 	}
 
 	p, err := NewProcessor(
-		context.Background(), &flowCtx, 0 /* processorID */, 0 /* stageID */, &core, &post,
+		context.Background(), &flowCtx, 0 /* processorID */, &core, &post,
 		[]execinfra.RowSource{in}, []execinfra.LocalProcessor{})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func (r *rowGeneratingSource) Next() (rowenc.EncDatumRow, *execinfrapb.ProducerM
 	}
 
 	for i := range r.scratchEncDatumRow {
-		r.scratchEncDatumRow[i] = rowenc.DatumToEncDatumUnsafe(r.types[i], datumRow[i])
+		r.scratchEncDatumRow[i] = rowenc.DatumToEncDatum(r.types[i], datumRow[i])
 	}
 	r.rowIdx++
 	return r.scratchEncDatumRow, nil
@@ -193,7 +193,7 @@ func (r *rowDisposer) NumRowsDisposed() int {
 //
 //	makeFetchSpec(t, table, "idx_c", "a,b,c")
 func makeFetchSpec(
-	t testing.TB, codec keys.SQLCodec, table catalog.TableDescriptor, indexName, colNames string,
+	t testing.TB, table catalog.TableDescriptor, indexName string, colNames string,
 ) fetchpb.IndexFetchSpec {
 	index, err := catalog.MustFindIndexByName(table, indexName)
 	if err != nil {
@@ -210,7 +210,7 @@ func makeFetchSpec(
 		}
 	}
 	var fetchSpec fetchpb.IndexFetchSpec
-	if err := rowenc.InitIndexFetchSpec(&fetchSpec, codec, table, index, colIDs); err != nil {
+	if err := rowenc.InitIndexFetchSpec(&fetchSpec, keys.SystemSQLCodec, table, index, colIDs); err != nil {
 		t.Fatal(err)
 	}
 	return fetchSpec
