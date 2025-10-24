@@ -22,7 +22,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql"
 	"github.com/cockroachdb/cockroach/pkg/sql/clusterunique"
-	"github.com/cockroachdb/cockroach/pkg/sql/parserutils"
+	"github.com/cockroachdb/cockroach/pkg/sql/parser"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/hba"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/identmap"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
@@ -99,7 +99,7 @@ var maxRepeatedErrorCount = settings.RegisterIntSetting(
 	"sql.pgwire.max_repeated_error_count",
 	"the maximum number of times an error can be received while reading from a "+
 		"network connection before the server aborts the connection",
-	1<<8, // 256
+	1<<15, // 32768
 	settings.PositiveInt,
 )
 
@@ -318,8 +318,6 @@ type Server struct {
 		// destinations tracks the metrics for each destination.
 		destinations map[string]*destinationMetrics
 	}
-	// limit the number of rejectNewConnection errors
-	connectionErrorLogEveryN log.EveryN
 
 	auth struct {
 		syncutil.RWMutex
@@ -501,7 +499,6 @@ func MakeServer(
 	server.mu.drainCh = make(chan struct{})
 	server.mu.destinations = make(map[string]*destinationMetrics)
 	server.mu.Unlock()
-	server.connectionErrorLogEveryN = log.Every(10 * time.Second)
 	executorConfig.CidrLookup.SetOnChange(server.onCidrChange)
 
 	connAuthConf.SetOnChange(&st.SV, func(ctx context.Context) {
@@ -562,7 +559,6 @@ func (s *Server) Metrics() []interface{} {
 		&s.SQLServer.ServerMetrics.StatsMetrics,
 		&s.SQLServer.ServerMetrics.ContentionSubsystemMetrics,
 		&s.SQLServer.ServerMetrics.InsightsMetrics,
-		&s.SQLServer.ServerMetrics.IngesterMetrics,
 	}
 }
 
@@ -943,9 +939,7 @@ func (s *Server) ServeConn(
 	st := s.execCfg.Settings
 	// If the server is shutting down, terminate the connection early.
 	if rejectNewConnections {
-		if s.connectionErrorLogEveryN.ShouldLog() {
-			log.Ops.Info(ctx, "rejecting new connection while server is draining")
-		}
+		log.Ops.Info(ctx, "rejecting new connection while server is draining")
 		return s.sendErr(ctx, st, conn, newAdminShutdownErr(ErrDrainingNewConn))
 	}
 
@@ -966,10 +960,8 @@ func (s *Server) ServeConn(
 	// been overridden by a status parameter).
 	connDetails.RemoteAddress = sArgs.RemoteAddr.String()
 	sp := tracing.SpanFromContext(ctx)
-	tags := logtags.BuildBuffer()
-	tags.Add("client", log.SafeOperational(connDetails.RemoteAddress))
-	tags.Add(preServeStatus.ConnType.String(), nil)
-	ctx = logtags.AddTags(ctx, tags.Finish())
+	ctx = logtags.AddTag(ctx, "client", log.SafeOperational(connDetails.RemoteAddress))
+	ctx = logtags.AddTag(ctx, preServeStatus.ConnType.String(), nil)
 	sp.SetTag("conn_type", attribute.StringValue(preServeStatus.ConnType.String()))
 	sp.SetTag("client", attribute.StringValue(connDetails.RemoteAddress))
 
@@ -984,7 +976,7 @@ func (s *Server) ServeConn(
 	// Defer the rest of the processing to the connection handler.
 	// This includes authentication.
 	if log.V(2) {
-		log.Dev.Infof(ctx, "new connection with options: %+v", sArgs)
+		log.Infof(ctx, "new connection with options: %+v", sArgs)
 	}
 
 	ctx, cancelConn := context.WithCancel(ctx)
@@ -1286,7 +1278,7 @@ func (s *Server) serveImpl(
 			isSimpleQuery := typ == pgwirebase.ClientMsgSimpleQuery
 			if err != nil {
 				if pgwirebase.IsMessageTooBigError(err) {
-					log.Dev.VInfof(ctx, 1, "pgwire: found big error message; attempting to slurp bytes and return error: %s", err)
+					log.VInfof(ctx, 1, "pgwire: found big error message; attempting to slurp bytes and return error: %s", err)
 
 					// Slurp the remaining bytes.
 					slurpN, slurpErr := c.readBuf.SlurpBytes(&c.rd, pgwirebase.GetMessageTooBigSize(err))
@@ -1326,7 +1318,7 @@ func (s *Server) serveImpl(
 
 			if ignoreUntilSync {
 				if typ != pgwirebase.ClientMsgSync {
-					log.Dev.VInfof(ctx, 1, "pgwire: skipping non-sync message after encountering error")
+					log.VInfof(ctx, 1, "pgwire: skipping non-sync message after encountering error")
 					return false, isSimpleQuery, nil
 				}
 				ignoreUntilSync = false
@@ -1361,7 +1353,7 @@ func (s *Server) serveImpl(
 				return true, isSimpleQuery, c.writeErr(ctx, err, &c.writerState.buf)
 			case pgwirebase.ClientMsgSimpleQuery:
 				if err = c.handleSimpleQuery(
-					ctx, &c.readBuf, timeReceived, parserutils.NakedIntTypeFromDefaultIntSize(atomic.LoadInt32(atomicUnqualifiedIntSize)),
+					ctx, &c.readBuf, timeReceived, parser.NakedIntTypeFromDefaultIntSize(atomic.LoadInt32(atomicUnqualifiedIntSize)),
 				); err != nil {
 					return false, isSimpleQuery, err
 				}
@@ -1392,7 +1384,7 @@ func (s *Server) serveImpl(
 				if err := c.prohibitUnderReplicationMode(ctx); err != nil {
 					return false, isSimpleQuery, err
 				}
-				return false, isSimpleQuery, c.handleParse(ctx, parserutils.NakedIntTypeFromDefaultIntSize(atomic.LoadInt32(atomicUnqualifiedIntSize)))
+				return false, isSimpleQuery, c.handleParse(ctx, parser.NakedIntTypeFromDefaultIntSize(atomic.LoadInt32(atomicUnqualifiedIntSize)))
 
 			case pgwirebase.ClientMsgDescribe:
 				if err := c.prohibitUnderReplicationMode(ctx); err != nil {

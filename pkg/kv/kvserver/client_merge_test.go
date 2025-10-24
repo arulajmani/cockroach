@@ -36,8 +36,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvflowcontrol/node_rac2"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvstorage"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/rditer"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/stateloader"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/txnwait"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvtestutils"
 	"github.com/cockroachdb/cockroach/pkg/raft/raftpb"
@@ -1367,9 +1367,9 @@ func TestStoreRangeMergeStats(t *testing.T) {
 	// Get the range stats for both ranges now that we have data.
 	snap := store.TODOEngine().NewSnapshot()
 	defer snap.Close()
-	msA, err := kvstorage.MakeStateLoader(lhsDesc.RangeID).LoadMVCCStats(ctx, snap)
+	msA, err := stateloader.Make(lhsDesc.RangeID).LoadMVCCStats(ctx, snap)
 	require.NoError(t, err)
-	msB, err := kvstorage.MakeStateLoader(rhsDesc.RangeID).LoadMVCCStats(ctx, snap)
+	msB, err := stateloader.Make(rhsDesc.RangeID).LoadMVCCStats(ctx, snap)
 	require.NoError(t, err)
 
 	// Stats should agree with recomputation.
@@ -1385,7 +1385,7 @@ func TestStoreRangeMergeStats(t *testing.T) {
 	// Get the range stats for the merged range and verify.
 	snap = store.TODOEngine().NewSnapshot()
 	defer snap.Close()
-	msMerged, err := kvstorage.MakeStateLoader(replMerged.RangeID).LoadMVCCStats(ctx, snap)
+	msMerged, err := stateloader.Make(replMerged.RangeID).LoadMVCCStats(ctx, snap)
 	require.NoError(t, err)
 
 	// Merged stats should agree with recomputation.
@@ -1921,7 +1921,7 @@ func TestStoreRangeMergeRHSLeaseExpiration(t *testing.T) {
 			// When this test was written, it would always produce the above
 			// interleaving, and successfully trigger the race when run with the race
 			// detector enabled about 50% of the time.
-			log.KvDistribution.Infof(ctx, "starting req %d", i)
+			log.Infof(ctx, "starting req %d", i)
 			var req kvpb.Request
 			if i%2 == 0 {
 				req = getArgs(rhsSentinel)
@@ -2550,7 +2550,7 @@ func TestStoreReplicaGCAfterMerge(t *testing.T) {
 
 	// Be extra paranoid and verify the exact value of the replica tombstone.
 	checkTombstone := func(eng storage.Engine) {
-		ts, err := kvstorage.MakeStateLoader(rhsDesc.RangeID).LoadRangeTombstone(ctx, eng)
+		ts, err := stateloader.Make(rhsDesc.RangeID).LoadRangeTombstone(ctx, eng)
 		require.NoError(t, err)
 		require.Equal(t, roachpb.ReplicaID(math.MaxInt32), ts.NextReplicaID)
 	}
@@ -3998,7 +3998,7 @@ func TestStoreRangeMergeRaftSnapshot(t *testing.T) {
 					require.NoError(t, sst.ClearRawRange(keys.RaftHardStateKey(rangeID), s.EndKey, true, false))
 				}
 
-				if err := kvstorage.MakeStateLoader(rangeID).SetRangeTombstone(
+				if err := stateloader.Make(rangeID).SetRangeTombstone(
 					context.Background(), &sst,
 					kvserverpb.RangeTombstone{NextReplicaID: math.MaxInt32},
 				); err != nil {
@@ -4167,7 +4167,7 @@ func TestStoreRangeMergeRaftSnapshot(t *testing.T) {
 		}
 
 		// Restore Raft traffic to the LHS on store2.
-		log.KvDistribution.Infof(ctx, "restored traffic to store 2")
+		log.Infof(ctx, "restored traffic to store 2")
 		tc.Servers[2].RaftTransport().(*kvserver.RaftTransport).ListenIncomingRaftMessages(store2.Ident.StoreID, &unreliableRaftHandler{
 			rangeID:                    aRepl0.RangeID,
 			IncomingRaftMessageHandler: store2,

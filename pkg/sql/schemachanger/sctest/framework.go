@@ -653,7 +653,6 @@ func cumulativeTestForEachPostCommitStage(
 	t *testing.T,
 	relTestCaseDir string,
 	factory TestServerFactory,
-	prepFn func(t *testing.T, spec CumulativeTestSpec, dbName string),
 	tf func(t *testing.T, spec CumulativeTestCaseSpec),
 ) {
 	testFunc := func(t *testing.T, spec CumulativeTestSpec) {
@@ -717,9 +716,6 @@ func cumulativeTestForEachPostCommitStage(
 			})
 		}
 		var hasFailed bool
-		if prepFn != nil {
-			prepFn(t, spec, dbName)
-		}
 		for _, tc := range testCases {
 			fn := func(t *testing.T) {
 				tf(t, tc)
@@ -965,27 +961,9 @@ func waitForSchemaChangesToSucceed(t *testing.T, tdb *sqlutils.SQLRunner) {
 }
 
 func waitForSchemaChangesToFinish(t *testing.T, tdb *sqlutils.SQLRunner) {
-	// Schema changes in more complex tests can be slower, so give them
-	// a lot more headroom to complete.
-	old := tdb.SucceedsSoonDuration
-	tdb.SucceedsSoonDuration = time.Minute * 2
-	defer func() {
-		tdb.SucceedsSoonDuration = old
-	}()
 	tdb.CheckQueryResultsRetry(
 		t, schemaChangeWaitQuery(`('succeeded', 'failed')`), [][]string{},
 	)
-}
-
-func hasLatestSchemaChangeSucceededWithTimestamp(
-	t *testing.T, tdb *sqlutils.SQLRunner, startTime time.Time,
-) (succeeded bool, jobExists bool) {
-	result := tdb.QueryStr(t, fmt.Sprintf(
-		`SELECT status FROM [SHOW JOBS] WHERE job_type IN ('%s') AND finished >= $1::timestamp ORDER BY finished DESC, job_id DESC LIMIT 1`,
-		jobspb.TypeNewSchemaChange,
-	),
-		startTime)
-	return len(result) == 0 || result[0][0] == "succeeded", len(result) > 0
 }
 
 func hasLatestSchemaChangeSucceeded(t *testing.T, tdb *sqlutils.SQLRunner) bool {
@@ -993,7 +971,7 @@ func hasLatestSchemaChangeSucceeded(t *testing.T, tdb *sqlutils.SQLRunner) bool 
 		`SELECT status FROM [SHOW JOBS] WHERE job_type IN ('%s') ORDER BY finished DESC, job_id DESC LIMIT 1`,
 		jobspb.TypeNewSchemaChange,
 	))
-	return len(result) == 0 || result[0][0] == "succeeded"
+	return result[0][0] == "succeeded"
 }
 
 func schemaChangeWaitQuery(statusInString string) string {
