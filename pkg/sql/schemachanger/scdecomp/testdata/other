@@ -311,13 +311,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 1
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -340,13 +340,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 4.294967292e+09
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -369,13 +369,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 4.294967293e+09
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -398,13 +398,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 4.294967294e+09
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -427,13 +427,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 4.294967295e+09
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -490,7 +490,6 @@ ElementState:
     isTemporary: false
     usesRelationIds:
     - 109
-    usesRoutineIds: []
     usesTypeIds: []
     viewId: 112
   Status: PUBLIC
@@ -592,13 +591,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 1
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -621,13 +620,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 2
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -650,13 +649,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 4.294967292e+09
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -679,13 +678,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 4.294967293e+09
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -708,13 +707,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 4.294967294e+09
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -737,13 +736,13 @@ ElementState:
   Status: PUBLIC
 - ColumnType:
     closedTypeIds: []
-    columnFamilyOrderFollowsColumnId: 0
     columnId: 4.294967295e+09
     computeExpr: null
     elementCreationMetadata:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -800,7 +799,6 @@ ElementState:
     isTemporary: false
     usesRelationIds:
     - 112
-    usesRoutineIds: []
     usesTypeIds:
     - 110
     - 111

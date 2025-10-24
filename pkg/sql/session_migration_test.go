@@ -8,6 +8,7 @@ package sql_test
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/datadriven"
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,25 +40,28 @@ func TestSessionMigration(t *testing.T) {
 
 	ctx := context.Background()
 	datadriven.Walk(t, datapathutils.TestDataPath(t, "session_migration"), func(t *testing.T, path string) {
-		srv := serverutils.StartServerOnly(t, base.TestServerArgs{})
-		defer srv.Stopper().Stop(ctx)
-		s := srv.ApplicationLayer()
+		s := serverutils.StartServerOnly(t, base.TestServerArgs{})
+		defer s.Stopper().Stop(ctx)
 
 		openConnFunc := func() *pgx.Conn {
-			pgURL, cleanupGoDB := s.PGUrl(
-				t,
-				serverutils.CertsDirPrefix("StartServer"),
-				serverutils.User(username.RootUser),
+			pgURL, cleanupGoDB, err := sqlutils.PGUrlE(
+				s.AdvSQLAddr(),
+				"StartServer", /* prefix */
+				url.User(username.RootUser),
 			)
+			require.NoError(t, err)
 			pgURL.Path = "defaultdb"
 
 			config, err := pgx.ParseConfig(pgURL.String())
 			require.NoError(t, err)
-			config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+			config.PreferSimpleProtocol = true
 			conn, err := pgx.ConnectConfig(ctx, config)
 			require.NoError(t, err)
 
-			s.AppStopper().AddCloser(stop.CloserFn(func() { cleanupGoDB() }))
+			s.Stopper().AddCloser(
+				stop.CloserFn(func() {
+					cleanupGoDB()
+				}))
 
 			return conn
 		}
@@ -69,21 +73,24 @@ func TestSessionMigration(t *testing.T) {
 		require.NoError(t, err)
 
 		openUserConnFunc := func(user string) *pgx.Conn {
-			pgURL, cleanupGoDB := s.PGUrl(
-				t,
-				serverutils.CertsDirPrefix("StartServer"),
-				serverutils.User(user),
+			pgURL, cleanupGoDB, err := sqlutils.PGUrlE(
+				s.AdvSQLAddr(),
+				"StartServer", /* prefix */
+				url.User(user),
 			)
 			require.NoError(t, err)
 			pgURL.Path = "defaultdb"
 
 			config, err := pgx.ParseConfig(pgURL.String())
 			require.NoError(t, err)
-			config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+			config.PreferSimpleProtocol = true
 			conn, err := pgx.ConnectConfig(ctx, config)
 			require.NoError(t, err)
 
-			s.AppStopper().AddCloser(stop.CloserFn(func() { cleanupGoDB() }))
+			s.Stopper().AddCloser(
+				stop.CloserFn(func() {
+					cleanupGoDB()
+				}))
 
 			return conn
 		}
