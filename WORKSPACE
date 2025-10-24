@@ -167,14 +167,14 @@ load(
 go_download_sdk(
     name = "go_sdk",
     sdks = {
-        "darwin_amd64": ("go1.23.12.darwin-amd64.tar.gz", "9df769f3d442ee435b192563d40b9989c07ab17b61d291a430c8b7bbb79d7d0a"),
-        "darwin_arm64": ("go1.23.12.darwin-arm64.tar.gz", "fd712f39537fbd282b5a3462abb5ee416e65ca315113f76a21366dcb0436b276"),
-        "linux_amd64": ("go1.23.12.linux-amd64.tar.gz", "8c36b5e049f10dd5c2c2455335603ff3872157f2a362e2f1abdb0cbad6d9ea17"),
-        "linux_arm64": ("go1.23.12.linux-arm64.tar.gz", "0a3742233760695d06de4f6e32e97c355b74dab01085d912bf228b6a51345bbc"),
-        "linux_s390x": ("go1.23.12.linux-s390x.tar.gz", "ffac7269c730700d50855c3b3dbd45c349d4ff8aba85b8996de5ccdb7a6bedaf"),
-        "windows_amd64": ("go1.23.12.windows-amd64.tar.gz", "ba36f3322807a84864b453f34bd61f3ccda33f76bceafccaf3e9e8d069d10ebf"),
+        "darwin_amd64": ("go1.23.12.darwin-amd64.tar.gz", "4917e3cd04f67975d1f29a97ca773689eec7192529b5ac3cb75d8f1e962a9e5b"),
+        "darwin_arm64": ("go1.23.12.darwin-arm64.tar.gz", "52ed7281c4f7d72510ee52251ecdac79ac9b54328043233b798c319ee76c1661"),
+        "linux_amd64": ("go1.23.12.linux-amd64.tar.gz", "1caa6570a988766707ca5cd42eb9a3f5f05082d9d1e322782cadb600332d859e"),
+        "linux_arm64": ("go1.23.12.linux-arm64.tar.gz", "a148957a75f61c5c745097e657ce2f1742dd7d513075d445546817035a601650"),
+        "linux_s390x": ("go1.23.12.linux-s390x.tar.gz", "458cc3169bdaf49c67e1e8e3c9ba532243256fab61761209f61869c0cc6a7ec1"),
+        "windows_amd64": ("go1.23.12.windows-amd64.tar.gz", "57783b115bc5f4301d5aadbf723c8abce458e48f405ddcdaf6f94bb435b97dab"),
     },
-    urls = ["https://storage.googleapis.com/public-bazel-artifacts/go/20251009-220233/{}"],
+    urls = ["https://storage.googleapis.com/public-bazel-artifacts/go/20251015-212755/{}"],
     version = "1.23.12",
 )
 
@@ -196,7 +196,6 @@ go_download_sdk(
 go_rules_dependencies()
 
 go_register_toolchains()
-
 go_register_nogo(nogo = "@com_github_cockroachdb_cockroach//:crdb_nogo")
 
 ###############################
@@ -336,10 +335,10 @@ load(
 
 http_archive(
     name = "rules_license",
-    sha256 = "26d4021f6898e23b82ef953078389dd49ac2b5618ac564ade4ef87cced147b38",
     urls = [
         "https://storage.googleapis.com/public-bazel-artifacts/bazel/rules_license-1.0.0.tar.gz",
     ],
+    sha256 = "26d4021f6898e23b82ef953078389dd49ac2b5618ac564ade4ef87cced147b38",
 )
 
 # keep
@@ -641,8 +640,8 @@ load("//build:pgo.bzl", "pgo_profile")
 
 pgo_profile(
     name = "pgo_profile",
-    sha256 = "7500eeeecba8edc9d25fd65b178568e7c543b50b3ef3ffc5e6e13af186ae2023",
-    url = "https://storage.googleapis.com/cockroach-profiles/20250926213937-4c6b4ce4dd320a7aa835757ed60f295f6e7c692c.pb.gz",
+    url = "https://storage.googleapis.com/cockroach-profiles/20250408173855.pprof",
+    sha256 = "7bbc17e28141f38f742e2834f4d0cdb0f589df91daeb0de64da9e35f824f58af",
 )
 
 # Download and register the FIPS enabled Go toolchain at the end to avoid toolchain conflicts for gazelle.
@@ -659,8 +658,8 @@ go_download_sdk(
     # able to provide additional diagnostic information such as the expected version of OpenSSL.
     experiments = ["boringcrypto"],
     sdks = {
-        "linux_amd64": ("go1.23.12fips.linux-amd64.tar.gz", "ca51c0e51ee0794dc7e0f058db672789eccfa887eb3bce47da6cf9a00a0df8f3"),
+        "linux_amd64": ("go1.23.12fips.linux-amd64.tar.gz", "8c3472d399280c511e36f4abc6673d4464674f1e1291a33c39b0a2264fe19271"),
     },
-    urls = ["https://storage.googleapis.com/public-bazel-artifacts/go/20251009-220233/{}"],
+    urls = ["https://storage.googleapis.com/public-bazel-artifacts/go/20251015-212755/{}"],
     version = "1.23.12fips",
 )

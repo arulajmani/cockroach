@@ -12,6 +12,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvstorage"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness/livenesspb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/rditer"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/stateloader"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage"
 	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
@@ -177,21 +178,6 @@ func WriteInitialClusterData(
 			); err != nil {
 				return err
 			}
-
-			// Set the last processed timestamp for the consistency checker as "now".
-			// This helps delay running the consistency checker for
-			// 'server.consistency_check.interval'. Note that splitting this range
-			// will copy the last processed timestamp to the right hand side, so newly
-			// split ranges will also delay running the consistency checker. This
-			// should improve the performance in workloads that cause many range
-			// splits by delaying the consistency checker.
-			if err := storage.MVCCPutProto(
-				ctx, batch, keys.QueueLastProcessedKey(desc.StartKey, "consistencyChecker"),
-				hlc.Timestamp{}, &now, storage.MVCCWriteOptions{},
-			); err != nil {
-				return err
-			}
-
 			// Range addressing for meta2.
 			meta2Key := keys.RangeMetaKey(endKey)
 			if err := storage.MVCCPutProto(
@@ -223,10 +209,8 @@ func WriteInitialClusterData(
 				}
 			}
 
-			if err := kvstorage.WriteInitialRangeState(
-				ctx, batch, batch,
-				*desc, firstReplicaID, initialReplicaVersion,
-			); err != nil {
+			if err := stateloader.WriteInitialRangeState(
+				ctx, batch, *desc, firstReplicaID, initialReplicaVersion); err != nil {
 				return err
 			}
 			computedStats, err := rditer.ComputeStatsForRange(ctx, desc, batch, now.WallTime)
@@ -234,7 +218,7 @@ func WriteInitialClusterData(
 				return err
 			}
 
-			sl := kvstorage.MakeStateLoader(rangeID)
+			sl := stateloader.Make(rangeID)
 			if err := sl.SetMVCCStats(ctx, batch, &computedStats); err != nil {
 				return err
 			}
@@ -271,6 +255,6 @@ func writeGlobalMVCCRangeTombstone(
 	if err := w.PutMVCCRangeKey(rangeKey, storage.MVCCValue{}); err != nil {
 		return err
 	}
-	log.KvDistribution.Warningf(ctx, "wrote global MVCC range tombstone %s", rangeKey)
+	log.Warningf(ctx, "wrote global MVCC range tombstone %s", rangeKey)
 	return nil
 }
