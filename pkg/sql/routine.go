@@ -22,7 +22,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sqltelemetry"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
-	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/cockroach/pkg/util/metamorphic"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/tracing"
@@ -63,7 +62,7 @@ func (d *callNode) startExec(params runParams) error {
 	if res == tree.DNull {
 		return pgerror.New(pgcode.Internal, "procedure returned null record")
 	}
-	tuple, ok := res.(*tree.DTuple)
+	tuple, ok := tree.AsDTuple(res)
 	if !ok {
 		return errors.AssertionFailedf("expected a tuple, got %T", res)
 	}
@@ -156,20 +155,6 @@ func (p *planner) EvalRoutineExpr(
 		}
 		ctx = context.WithValue(ctx, triggerDepthKey{}, triggerDepth+1)
 	}
-	if buildutil.CrdbTestBuild && !tailCallOptimizationEnabled {
-		// In test builds when we disable tail-call optimization, we might hit
-		// stack overflow with infinite loops.
-		var routineDepth int
-		if routineDepthValue := ctx.Value(routineDepthKey{}); routineDepthValue != nil {
-			routineDepth = routineDepthValue.(int)
-		}
-		const maxDepth = 100
-		if routineDepth > maxDepth {
-			return nil, pgerror.Newf(pgcode.ProgramLimitExceeded,
-				"routine reached recursion depth limit: %d (probably infinite loop)", maxDepth)
-		}
-		ctx = context.WithValue(ctx, routineDepthKey{}, routineDepth+1)
-	}
 
 	var g routineGenerator
 	g.init(p, expr, args)
@@ -207,8 +192,6 @@ func (p *planner) EvalRoutineExpr(
 }
 
 type triggerDepthKey struct{}
-
-type routineDepthKey struct{}
 
 // RoutineExprGenerator returns an eval.ValueGenerator that produces the results
 // of a routine.
@@ -368,11 +351,10 @@ func (g *routineGenerator) startInternal(ctx context.Context, txn *kv.Txn) (err 
 
 			// Run the plan.
 			params := runParams{ctx, g.p.ExtendedEvalContext(), g.p}
-			queryStats, err := runPlanInsidePlan(ctx, params, plan.(*planComponents), w, g, stmtForDistSQLDiagram)
+			err = runPlanInsidePlan(ctx, params, plan.(*planComponents), w, g, stmtForDistSQLDiagram)
 			if err != nil {
 				return err
 			}
-			forwardInnerQueryStats(g.p.routineMetadataForwarder, queryStats)
 			if openCursor {
 				return cursorHelper.createCursor(g.p)
 			}

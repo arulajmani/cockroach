@@ -16,7 +16,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
-	"github.com/cockroachdb/crlib/crtime"
+	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
 )
 
@@ -56,10 +56,10 @@ type bufferedRegistration struct {
 		outputLoopCancelFn func()
 		disconnected       bool
 
-		// catchUpIter is created by replica under raftMu lock when registration is
-		// created. It is detached by output loop for processing and closed. If
-		// output loop was not started and catchUpIter is non-nil at the time that
-		// disconnect is called, it is closed by disconnect.
+		// catchUpIter is created by replcia under raftMu lock when registration is
+		// created. It is detached by output loop for processing and closed.
+		// If output loop was not started and catchUpIter is non-nil at the time
+		// that disconnect is called, it is closed by disconnect.
 		catchUpIter *CatchUpIterator
 	}
 
@@ -78,7 +78,6 @@ func newBufferedRegistration(
 	withDiff bool,
 	withFiltering bool,
 	withOmitRemote bool,
-	bulkDeliverySize int,
 	bufferSz int,
 	blockWhenFull bool,
 	metrics *Metrics,
@@ -86,15 +85,15 @@ func newBufferedRegistration(
 	removeRegFromProcessor func(registration),
 ) *bufferedRegistration {
 	br := &bufferedRegistration{
-		baseRegistration: newBaseRegistration(
-			streamCtx,
-			span,
-			startTS,
-			withDiff,
-			withFiltering,
-			withOmitRemote,
-			bulkDeliverySize,
-			removeRegFromProcessor),
+		baseRegistration: baseRegistration{
+			streamCtx:              streamCtx,
+			span:                   span,
+			catchUpTimestamp:       startTS,
+			withDiff:               withDiff,
+			withFiltering:          withFiltering,
+			withOmitRemote:         withOmitRemote,
+			removeRegFromProcessor: removeRegFromProcessor,
+		},
 		metrics:       metrics,
 		stream:        stream,
 		buf:           make(chan *sharedEvent, bufferSz),
@@ -196,7 +195,7 @@ func (br *bufferedRegistration) outputLoop(ctx context.Context) error {
 	// If the registration has a catch-up scan, run it.
 	if err := br.maybeRunCatchUpScan(ctx); err != nil {
 		err = errors.Wrap(err, "catch-up scan failed")
-		log.KvExec.Errorf(ctx, "%v", err)
+		log.Errorf(ctx, "%v", err)
 		return err
 	}
 
@@ -229,7 +228,7 @@ func (br *bufferedRegistration) outputLoop(ctx context.Context) error {
 
 		if overflowed {
 			if wasOverflowedOnFirstIteration && br.shouldLogOverflow(oneCheckpointWithTimestampSent) {
-				log.KvExec.Warningf(ctx, "rangefeed %s overflowed during catch up scan from %s (useful checkpoint sent: %v)",
+				log.Warningf(ctx, "rangefeed %s overflowed during catch up scan from %s (useful checkpoint sent: %v)",
 					br.span, br.catchUpTimestamp, oneCheckpointWithTimestampSent)
 			}
 
@@ -303,13 +302,13 @@ func (br *bufferedRegistration) maybeRunCatchUpScan(ctx context.Context) error {
 	if catchUpIter == nil {
 		return nil
 	}
-	start := crtime.NowMono()
+	start := timeutil.Now()
 	defer func() {
 		catchUpIter.Close()
-		br.metrics.RangeFeedCatchUpScanNanos.Inc(start.Elapsed().Nanoseconds())
+		br.metrics.RangeFeedCatchUpScanNanos.Inc(timeutil.Since(start).Nanoseconds())
 	}()
 
-	return catchUpIter.CatchUpScan(ctx, br.stream.SendUnbuffered, br.withDiff, br.withFiltering, br.withOmitRemote, br.bulkDelivery)
+	return catchUpIter.CatchUpScan(ctx, br.stream.SendUnbuffered, br.withDiff, br.withFiltering, br.withOmitRemote)
 }
 
 // Wait for this registration to completely process its internal

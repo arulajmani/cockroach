@@ -10,6 +10,7 @@ import (
 	"context"
 	gosql "database/sql"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
+	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -33,6 +35,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/distsqlutils"
+	"github.com/cockroachdb/cockroach/pkg/testutils/pgurlutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
@@ -51,7 +54,7 @@ func TestPostProcess(t *testing.T) {
 
 	v := [10]rowenc.EncDatum{}
 	for i := range v {
-		v[i] = rowenc.DatumToEncDatumUnsafe(types.Int, tree.NewDInt(tree.DInt(i)))
+		v[i] = rowenc.DatumToEncDatum(types.Int, tree.NewDInt(tree.DInt(i)))
 	}
 
 	// We run the same input rows through various PostProcessSpecs.
@@ -395,10 +398,10 @@ func TestProcessorBaseContext(t *testing.T) {
 }
 
 func getPGXConnAndCleanupFunc(
-	ctx context.Context, t *testing.T, s serverutils.ApplicationLayerInterface,
+	ctx context.Context, t *testing.T, servingSQLAddr string,
 ) (*pgx.Conn, func()) {
 	t.Helper()
-	pgURL, cleanup := s.PGUrl(t, serverutils.User(username.RootUser))
+	pgURL, cleanup := pgurlutils.PGUrl(t, servingSQLAddr, t.Name(), url.User(username.RootUser))
 	pgURL.Path = "test"
 	pgxConfig, err := pgx.ParseConfig(pgURL.String())
 	require.NoError(t, err)
@@ -534,7 +537,7 @@ func TestDrainingProcessorSwallowsUncertaintyError(t *testing.T) {
 	}
 
 	populateRangeCacheAndDisableBuffering(t, origDB0, "t")
-	defaultConn, cleanup := getPGXConnAndCleanupFunc(ctx, t, tc.ApplicationLayer(0))
+	defaultConn, cleanup := getPGXConnAndCleanupFunc(ctx, t, tc.Server(0).AdvSQLAddr())
 	defer cleanup()
 
 	// Run with the vectorize off and on.
@@ -692,12 +695,11 @@ func TestUncertaintyErrorIsReturned(t *testing.T) {
 	ctx := context.Background()
 	tc := serverutils.StartCluster(t, numNodes, testClusterArgs)
 	defer tc.Stopper().Stop(ctx)
-	s := tc.ApplicationLayer(0)
 
 	// Create a 30-row table, split and scatter evenly across the numNodes nodes.
-	dbConn := s.SQLConn(t, serverutils.DBName("test"))
+	dbConn := tc.ServerConn(0)
 	sqlutils.CreateTable(t, dbConn, "t", "x INT, y INT, INDEX (y)", 30, sqlutils.ToRowFn(sqlutils.RowIdxFn, sqlutils.RowIdxFn))
-	tableID := desctestutils.TestingGetPublicTableDescriptor(s.DB(), s.Codec(), "test", "t").GetID()
+	tableID := desctestutils.TestingGetPublicTableDescriptor(tc.Server(0).DB(), keys.SystemSQLCodec, "test", "t").GetID()
 	// onerow is a table created to test #51458. The value of the only row in this
 	// table is explicitly set to 2 so that it is routed by hash to a desired
 	// destination.
@@ -712,7 +714,7 @@ func TestUncertaintyErrorIsReturned(t *testing.T) {
 	))
 	require.NoError(t, err)
 	populateRangeCacheAndDisableBuffering(t, dbConn, "t")
-	defaultConn, cleanup := getPGXConnAndCleanupFunc(ctx, t, s)
+	defaultConn, cleanup := getPGXConnAndCleanupFunc(ctx, t, tc.Server(0).AdvSQLAddr())
 	defer cleanup()
 
 	testCases := []struct {
@@ -793,7 +795,7 @@ func TestUncertaintyErrorIsReturned(t *testing.T) {
 					for _, nodeIdx := range errorOrigin {
 						filters[nodeIdx].Lock()
 						filters[nodeIdx].enabled = true
-						filters[nodeIdx].keyPrefix = s.Codec().TablePrefix(uint32(tableID))
+						filters[nodeIdx].keyPrefix = keys.SystemSQLCodec.TablePrefix(uint32(tableID))
 						filters[nodeIdx].Unlock()
 					}
 					// Reset all filters for the next test case.

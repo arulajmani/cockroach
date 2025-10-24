@@ -274,6 +274,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -306,6 +307,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -327,7 +329,7 @@ ElementState:
         visibleType: 0
         width: 0
       arrayDimensions: []
-      arrayElemType: null
+      arrayElemType: EnumFamily
       family: ArrayFamily
       geoMetadata: null
       intervalDurationField: null
@@ -353,6 +355,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: true
     tableId: 108
     type:
@@ -383,6 +386,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: false
     isVirtual: false
     tableId: 108
     type:
@@ -412,6 +416,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -441,6 +446,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -470,6 +476,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -499,6 +506,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -528,6 +536,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: false
     isVirtual: false
     tableId: 108
     type:
@@ -671,7 +680,6 @@ ElementState:
     constraintId: 0
     expr: g::STRING = 'hi':::STRING
     geoConfig: null
-    hideForPrimaryKeyRecreated: false
     indexId: 2
     invisibility: 0
     isConcurrently: false
@@ -699,9 +707,6 @@ ElementState:
   Status: PUBLIC
 - TableData:
     databaseId: 100
-    tableId: 108
-  Status: PUBLIC
-- TableSchemaLocked:
     tableId: 108
   Status: PUBLIC
 - UniqueWithoutIndexConstraint:
@@ -1080,6 +1085,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 111
     type:
@@ -1133,7 +1139,7 @@ ElementState:
         visibleType: 0
         width: 0
       arrayDimensions: []
-      arrayElemType: null
+      arrayElemType: TupleFamily
       family: ArrayFamily
       geoMetadata: null
       intervalDurationField: null
@@ -1158,6 +1164,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 111
     type:
@@ -1221,6 +1228,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 111
     type:
@@ -1284,6 +1292,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: true
     tableId: 111
     type:
@@ -1346,6 +1355,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: false
     isVirtual: false
     tableId: 111
     type:
@@ -1375,6 +1385,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 111
     type:
@@ -1404,6 +1415,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 111
     type:
@@ -1433,6 +1445,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 111
     type:
@@ -1462,6 +1475,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 111
     type:
@@ -1491,6 +1505,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: false
     isVirtual: false
     tableId: 111
     type:
@@ -1520,6 +1535,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: true
     tableId: 111
     type:
@@ -1668,7 +1684,6 @@ ElementState:
     constraintId: 0
     expr: (c).a = 3:::INT8
     geoConfig: null
-    hideForPrimaryKeyRecreated: false
     indexId: 2
     invisibility: 0
     isConcurrently: false
@@ -1696,9 +1711,6 @@ ElementState:
   Status: PUBLIC
 - TableData:
     databaseId: 100
-    tableId: 111
-  Status: PUBLIC
-- TableSchemaLocked:
     tableId: 111
   Status: PUBLIC
 - UserPrivileges:

@@ -139,16 +139,9 @@ func TestAllRegisteredSetup(t *testing.T) {
 				t.Fatal(err)
 			}
 		case `interleavedpartitioned`:
-			// This require a specific node locality setup.
+			// This require a specific node locality setup
 			continue
 		case `ttlbench`:
-			continue
-		case `vecann`:
-			// This requires downloading from a GCP bucket and storing in the
-			// machine's ~/.cache directory.
-			continue
-		case `workload_generator`:
-			// This will take its schema generation data from flags at run time, so static checks are not valid.
 			continue
 		}
 
@@ -295,8 +288,8 @@ func TestDeterministicInitialData(t *testing.T) {
 		`sqlsmith`:   0xcbf29ce484222325,
 		`startrek`:   0xa0249fbdf612734c,
 		`tpcc`:       0xccfecd06eed59975,
-		`tpch`:       0x95bafd37ccb1eb7d,
-		`ycsb`:       0xa00a7efc9d3b8532,
+		`tpch`:       0xcd2abbd021ed895d,
+		`ycsb`:       0x0e6012ee6491a0fb,
 	}
 
 	var a bufalloc.ByteAllocator

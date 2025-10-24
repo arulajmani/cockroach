@@ -233,6 +233,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 110
     type:
@@ -262,6 +263,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: false
     isVirtual: false
     tableId: 110
     type:
@@ -291,6 +293,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 110
     type:
@@ -320,6 +323,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 110
     type:
@@ -349,6 +353,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 110
     type:
@@ -378,6 +383,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 110
     type:
@@ -467,9 +473,6 @@ ElementState:
     tableId: 110
   Status: PUBLIC
 - TableLocalityGlobal:
-    tableId: 110
-  Status: PUBLIC
-- TableSchemaLocked:
     tableId: 110
   Status: PUBLIC
 - TableZoneConfig:
@@ -627,6 +630,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 109
     type:
@@ -656,6 +660,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: false
     isVirtual: false
     tableId: 109
     type:
@@ -685,6 +690,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 109
     type:
@@ -714,6 +720,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 109
     type:
@@ -743,6 +750,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 109
     type:
@@ -772,6 +780,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 109
     type:
@@ -863,9 +872,6 @@ ElementState:
 - TableLocalitySecondaryRegion:
     regionEnumTypeId: 106
     regionName: us-east2
-    tableId: 109
-  Status: PUBLIC
-- TableSchemaLocked:
     tableId: 109
   Status: PUBLIC
 - TableZoneConfig:
@@ -1077,6 +1083,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: false
     isVirtual: false
     tableId: 108
     type:
@@ -1107,6 +1114,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: false
     isVirtual: false
     tableId: 108
     type:
@@ -1136,6 +1144,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -1165,6 +1174,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -1194,6 +1204,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -1223,6 +1234,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -1252,6 +1264,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 108
     type:
@@ -1556,9 +1569,6 @@ ElementState:
     tableId: 108
   Status: PUBLIC
 - TablePartitioning:
-    tableId: 108
-  Status: PUBLIC
-- TableSchemaLocked:
     tableId: 108
   Status: PUBLIC
 - TableZoneConfig:

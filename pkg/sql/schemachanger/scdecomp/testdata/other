@@ -318,6 +318,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -347,6 +348,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -376,6 +378,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -405,6 +408,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -434,6 +438,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 112
     type:
@@ -490,7 +495,6 @@ ElementState:
     isTemporary: false
     usesRelationIds:
     - 109
-    usesRoutineIds: []
     usesTypeIds: []
     viewId: 112
   Status: PUBLIC
@@ -599,6 +603,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -628,6 +633,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -657,6 +663,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -686,6 +693,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -715,6 +723,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -744,6 +753,7 @@ ElementState:
       in231OrLater: true
       in243OrLater: true
     familyId: 0
+    isNullable: true
     isVirtual: false
     tableId: 113
     type:
@@ -800,7 +810,6 @@ ElementState:
     isTemporary: false
     usesRelationIds:
     - 112
-    usesRoutineIds: []
     usesTypeIds:
     - 110
     - 111
