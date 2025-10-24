@@ -221,7 +221,7 @@ func indexEntryForDatums(
 	}
 	indexEntries, err := rowenc.EncodeSecondaryIndex(
 		context.Background(), keys.SystemSQLCodec, tableDesc, index,
-		colIDtoRowIndex, row, rowenc.EmptyVectorIndexEncodingHelper, true, /* includeEmpty */
+		colIDtoRowIndex, row, true, /* includeEmpty */
 	)
 	if err != nil {
 		return rowenc.IndexEntry{}, err
@@ -298,7 +298,7 @@ CREATE INDEX secondary ON t.test (v);
 	}
 	defer rows.Close()
 
-	results, err := sqlutils.GetInspectResultRows(rows)
+	results, err := sqlutils.GetScrubResultRows(rows)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -327,7 +327,7 @@ CREATE INDEX secondary ON t.test (v);
 		t.Fatalf("unexpected error: %+v", err)
 	}
 	defer rows.Close()
-	scrubDatabaseResults, err := sqlutils.GetInspectResultRows(rows)
+	scrubDatabaseResults, err := sqlutils.GetScrubResultRows(rows)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	} else if len(scrubDatabaseResults) != 1 {
@@ -386,7 +386,7 @@ INSERT INTO t.test VALUES (10, 20, 1337);
 	}
 	defer rows.Close()
 
-	results, err := sqlutils.GetInspectResultRows(rows)
+	results, err := sqlutils.GetScrubResultRows(rows)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -397,7 +397,7 @@ INSERT INTO t.test VALUES (10, 20, 1337);
 	}
 
 	// Assert the missing index error is correct.
-	var missingIndexError *sqlutils.InspectResult
+	var missingIndexError *sqlutils.ScrubResult
 	for _, result := range results {
 		if result.ErrorType == scrub.MissingIndexEntryError {
 			missingIndexError = &result
@@ -420,7 +420,7 @@ INSERT INTO t.test VALUES (10, 20, 1337);
 	}
 
 	// Assert the dangling index error is correct.
-	var danglingIndexResult *sqlutils.InspectResult
+	var danglingIndexResult *sqlutils.ScrubResult
 	for _, result := range results {
 		if result.ErrorType == scrub.DanglingIndexReferenceError {
 			danglingIndexResult = &result
@@ -487,7 +487,7 @@ INSERT INTO t.test VALUES (10, 2);
 	values = []tree.Datum{tree.NewDInt(10), tree.NewDInt(0)}
 	// Encode the column value.
 	valueBuf, err := valueside.Encode(
-		[]byte(nil), valueside.MakeColumnIDDelta(0, tableDesc.PublicColumns()[1].GetID()), values[1])
+		[]byte(nil), valueside.MakeColumnIDDelta(0, tableDesc.PublicColumns()[1].GetID()), values[1], []byte(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -505,7 +505,7 @@ INSERT INTO t.test VALUES (10, 2);
 		t.Fatalf("unexpected error: %s", err)
 	}
 	defer rows.Close()
-	results, err := sqlutils.GetInspectResultRows(rows)
+	results, err := sqlutils.GetScrubResultRows(rows)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -544,7 +544,6 @@ func TestScrubFKConstraintFKMissing(t *testing.T) {
 	s, db, kvDB := serverutils.StartServer(t, base.TestServerArgs{})
 	defer s.Stopper().Stop(context.Background())
 	r := sqlutils.MakeSQLRunner(db)
-	r.Exec(t, `SET autocommit_before_ddl = false`)
 
 	// Create the table and the row entry.
 	r.Exec(t, `
