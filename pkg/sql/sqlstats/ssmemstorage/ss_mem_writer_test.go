@@ -119,7 +119,6 @@ func TestContainer_Add(t *testing.T) {
 			RowsWritten:        5,
 			Failed:             true,
 			Generic:            true,
-			AppliedStmtHints:   true,
 			StatementError:     errors.New("test error"),
 		}
 		require.NoError(t, src.RecordStatement(ctx, stmtStats))
@@ -162,7 +161,6 @@ func TestContainer_Add(t *testing.T) {
 			RowsWritten:        80,
 			Failed:             true,
 			Generic:            true,
-			AppliedStmtHints:   true,
 			StatementError:     errors.New("test error"),
 		}
 		reducedTxnFingerprintID := appstatspb.TransactionFingerprintID(321)
@@ -210,7 +208,6 @@ func verifyStmtStatsMultiple(
 	require.Equal(t, destStmtStats.mu.data.Count, int64(count))
 	require.Equal(t, destStmtStats.mu.data.FailureCount, int64(count))
 	require.Equal(t, destStmtStats.mu.data.GenericCount, int64(count))
-	require.Equal(t, destStmtStats.mu.data.StmtHintsCount, int64(count))
 	require.InEpsilon(t, float64(stmtStats.RowsAffected), destStmtStats.mu.data.NumRows.Mean, epsilon)
 	require.InEpsilon(t, float64(stmtStats.RowsAffected), destStmtStats.mu.data.NumRows.Mean, epsilon)
 	require.InEpsilon(t, stmtStats.IdleLatencySec, destStmtStats.mu.data.IdleLat.Mean, epsilon)

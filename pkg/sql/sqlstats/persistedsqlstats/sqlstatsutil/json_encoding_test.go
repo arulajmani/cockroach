@@ -54,7 +54,6 @@ func TestSQLStatsJsonEncoding(t *testing.T) {
          "firstAttemptCnt": {{.Int64}},
          "failureCount":    {{.Int64}},
          "genericCount":    {{.Int64}},
-         "stmtHintsCount":  {{.Int64}},
          "maxRetries":      {{.Int64}},
          "lastExecAt":      "{{stringifyTime .Time}}",
          "numRows": {

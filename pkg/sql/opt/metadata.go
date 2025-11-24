@@ -132,7 +132,7 @@ type Metadata struct {
 	// objectRefsByName stores each unique name that the query uses to reference
 	// each object. It is needed because changes to the search path may change
 	// which object a given name refers to; for example, switching the database.
-	objectRefsByName map[cat.StableID]tree.UnresolvedObjectNameSet
+	objectRefsByName map[cat.StableID][]*tree.UnresolvedObjectName
 
 	// privileges stores the privileges needed to access each object that the
 	// query depends on.
@@ -204,7 +204,7 @@ func (md *Metadata) Init() {
 
 	objectRefsByName := md.objectRefsByName
 	if objectRefsByName == nil {
-		objectRefsByName = make(map[cat.StableID]tree.UnresolvedObjectNameSet)
+		objectRefsByName = make(map[cat.StableID][]*tree.UnresolvedObjectName)
 	}
 	for id := range md.objectRefsByName {
 		delete(md.objectRefsByName, id)
@@ -306,12 +306,10 @@ func (md *Metadata) CopyFrom(from *Metadata, copyScalarFn func(Expr) Expr) {
 
 	for id, names := range from.objectRefsByName {
 		if md.objectRefsByName == nil {
-			md.objectRefsByName = make(map[cat.StableID]tree.UnresolvedObjectNameSet)
+			md.objectRefsByName = make(map[cat.StableID][]*tree.UnresolvedObjectName)
 		}
-		newNames := tree.MakeUnresolvedObjectNameSet(names.Len())
-		for i, n := 0, names.Len(); i < n; i++ {
-			newNames.Add(names.Get(i))
-		}
+		newNames := make([]*tree.UnresolvedObjectName, len(names))
+		copy(newNames, names)
 		md.objectRefsByName[id] = newNames
 	}
 
@@ -336,7 +334,11 @@ func (md *Metadata) CopyFrom(from *Metadata, copyScalarFn func(Expr) Expr) {
 	// We cannot copy the bound expressions; they must be rebuilt in the new memo.
 	md.withBindings = nil
 
-	md.rlsMeta = from.rlsMeta.Copy()
+	md.rlsMeta = from.rlsMeta
+	md.rlsMeta.PoliciesApplied = make(map[TableID]PoliciesApplied)
+	for id, policies := range from.rlsMeta.PoliciesApplied {
+		md.rlsMeta.PoliciesApplied[id] = policies.Copy()
+	}
 }
 
 // MDDepName stores either the unresolved DataSourceName or the StableID from
@@ -373,9 +375,7 @@ func (md *Metadata) AddDependency(name MDDepName, ds cat.DataSource, priv privil
 	md.privileges[id] = md.privileges[id] | (1 << priv)
 	if name.byID == 0 {
 		// This data source was referenced by name.
-		names := md.objectRefsByName[id]
-		names.Add(name.byName.ToUnresolvedObjectName())
-		md.objectRefsByName[id] = names
+		md.objectRefsByName[id] = append(md.objectRefsByName[id], name.byName.ToUnresolvedObjectName())
 	}
 }
 
@@ -469,8 +469,8 @@ func (md *Metadata) CheckDependencies(
 		var toCheck cat.DataSource
 		if names, ok := md.objectRefsByName[id]; ok {
 			// The data source was referenced by name at least once.
-			for i, n := 0, names.Len(); i < n; i++ {
-				tableName := names.Get(i).ToTableName()
+			for _, name := range names {
+				tableName := name.ToTableName()
 				toCheck, _, err = optCatalog.ResolveDataSource(ctx, cat.Flags{}, &tableName)
 				if err != nil || !dataSource.Equals(toCheck) {
 					return false, maybeSwallowMetadataResolveErr(err)
@@ -489,8 +489,8 @@ func (md *Metadata) CheckDependencies(
 	for _, typ := range md.AllUserDefinedTypes() {
 		id := cat.StableID(catid.UserDefinedOIDToID(typ.Oid()))
 		if names, ok := md.objectRefsByName[id]; ok {
-			for i, n := 0, names.Len(); i < n; i++ {
-				toCheck, err := optCatalog.ResolveType(ctx, names.Get(i))
+			for _, name := range names {
+				toCheck, err := optCatalog.ResolveType(ctx, name)
 				if err != nil || typ.Oid() != toCheck.Oid() ||
 					typ.TypeMeta.Version != toCheck.TypeMeta.Version {
 					return false, maybeSwallowMetadataResolveErr(err)
@@ -509,8 +509,7 @@ func (md *Metadata) CheckDependencies(
 	for id, dep := range md.routineDeps {
 		overload := dep.overload
 		if names, ok := md.objectRefsByName[id]; ok {
-			for i, n := 0, names.Len(); i < n; i++ {
-				name := names.Get(i)
+			for _, name := range names {
 				definition, err := optCatalog.ResolveFunction(
 					ctx, tree.MakeUnresolvedFunctionName(name.ToUnresolvedName()),
 					&evalCtx.SessionData().SearchPath,
@@ -636,38 +635,20 @@ func maybeSwallowMetadataResolveErr(err error) error {
 // query for the referenced data sources have been revoked.
 func (md *Metadata) checkDataSourcePrivileges(ctx context.Context, optCatalog cat.Catalog) error {
 	for _, dataSource := range md.dataSourceDeps {
-		err := func() error {
-			privileges := md.privileges[dataSource.ID()]
-
-			// Check if this dependency has the special builtin-allowed privilege.
-			// If so, disable unsafe internal checks for all privilege checks on this data source.
-			if (privileges & (1 << privilege.BUILTIN_UNSAFE_ALLOWED)) != 0 {
-				// Clear the BUILTIN_UNSAFE_ALLOWED bit so the loop doesn't process it.
-				privileges &= ^privilegeBitmap(1 << privilege.BUILTIN_UNSAFE_ALLOWED)
-
-				// Disable unsafe internal checks for this data source.
-				defer optCatalog.DisableUnsafeInternalCheck()()
-			}
-
-			for privs := privileges; privs != 0; {
-				// Strip off each privilege bit and make call to CheckPrivilege for it.
-				// Note that priv == 0 can occur when a dependency was added with
-				// privilege.Kind = 0 (e.g. for a table within a view, where the table
-				// privileges do not need to be checked). Ignore the "zero privilege".
-				priv := privilege.Kind(bits.TrailingZeros32(uint32(privs)))
-				if priv != 0 {
-					if err := optCatalog.CheckPrivilege(ctx, dataSource, optCatalog.GetCurrentUser(), priv); err != nil {
-						return err
-					}
+		privileges := md.privileges[dataSource.ID()]
+		for privs := privileges; privs != 0; {
+			// Strip off each privilege bit and make call to CheckPrivilege for it.
+			// Note that priv == 0 can occur when a dependency was added with
+			// privilege.Kind = 0 (e.g. for a table within a view, where the table
+			// privileges do not need to be checked). Ignore the "zero privilege".
+			priv := privilege.Kind(bits.TrailingZeros32(uint32(privs)))
+			if priv != 0 {
+				if err := optCatalog.CheckPrivilege(ctx, dataSource, optCatalog.GetCurrentUser(), priv); err != nil {
+					return err
 				}
-				// Set the just-handled privilege bit to zero and look for next.
-				privs &= ^(1 << priv)
 			}
-
-			return nil
-		}()
-		if err != nil {
-			return err
+			// Set the just-handled privilege bit to zero and look for next.
+			privs &= ^(1 << priv)
 		}
 	}
 	return nil
@@ -700,9 +681,7 @@ func (md *Metadata) AddUserDefinedType(typ *types.T, name *tree.UnresolvedObject
 	}
 	if name != nil {
 		id := cat.StableID(catid.UserDefinedOIDToID(typ.Oid()))
-		names := md.objectRefsByName[id]
-		names.Add(name)
-		md.objectRefsByName[id] = names
+		md.objectRefsByName[id] = append(md.objectRefsByName[id], name)
 	}
 }
 
@@ -732,9 +711,7 @@ func (md *Metadata) AddUserDefinedRoutine(
 		invocationTypes: invocationTypes,
 	}
 	if name != nil {
-		names := md.objectRefsByName[id]
-		names.Add(name)
-		md.objectRefsByName[id] = names
+		md.objectRefsByName[id] = append(md.objectRefsByName[id], name)
 	}
 }
 
@@ -1198,7 +1175,7 @@ func (md *Metadata) TestingRoutineDepsEqual(other *Metadata) bool {
 }
 
 // TestingObjectRefsByName exposes the objectRefsByName for testing.
-func (md *Metadata) TestingObjectRefsByName() map[cat.StableID]tree.UnresolvedObjectNameSet {
+func (md *Metadata) TestingObjectRefsByName() map[cat.StableID][]*tree.UnresolvedObjectName {
 	return md.objectRefsByName
 }
 

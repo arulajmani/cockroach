@@ -85,6 +85,10 @@ func runNetworkAuthentication(ctx context.Context, t test.Test, c cluster.Cluste
 		c.Start(ctx, t.L(), startOpts, settings, c.Node(1))
 	}
 
+	t.L().Printf("retrieving server addresses...")
+	serverUrls, err := c.InternalPGUrl(ctx, t.L(), serverNodes, roachprod.PGURLOptions{Auth: install.AuthUserPassword})
+	require.NoError(t, err)
+
 	t.L().Printf("fetching certs...")
 	certsDir := fmt.Sprintf("/home/ubuntu/%s", install.CockroachNodeCertsDir)
 	localCertsDir, err := filepath.Abs("./network-certs")
@@ -162,7 +166,7 @@ SELECT $1::INT = ALL (
 	// in case an error occurs.
 	woopsCh := make(chan struct{}, len(serverNodes)-1)
 
-	m := c.NewDeprecatedMonitor(ctx, serverNodes)
+	m := c.NewMonitor(ctx, serverNodes)
 
 	var numConns uint32
 
@@ -202,7 +206,7 @@ SELECT $1::INT = ALL (
 				}
 
 				// Construct a connection URL to server i.
-				url := fmt.Sprintf("{pgurl:%d}", server)
+				url := serverUrls[server-1]
 
 				// Attempt a client connection to that server.
 				t.L().Printf("server %d, attempt %d; url: %s\n", server, attempt, url)
@@ -334,7 +338,7 @@ func runClientNetworkConnectionTimeout(ctx context.Context, t test.Test, c clust
 	grp.Go(func(ctx context.Context, l *logger.Logger) error {
 		urls, err := roachprod.PgURL(ctx, l, c.MakeNodes(c.Node(1)), certsDir, roachprod.PGURLOptions{
 			External: true,
-			Secure:   install.SimpleSecureOption(true),
+			Secure:   true,
 		})
 		if err != nil {
 			return err
