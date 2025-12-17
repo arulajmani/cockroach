@@ -8,7 +8,6 @@ package lease
 import (
 	"context"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
@@ -17,7 +16,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
-	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/redact"
 )
 
@@ -39,12 +37,6 @@ var _ redact.SafeFormatter = (*storedLease)(nil)
 // SafeFormat implements redact.SafeFormatter.
 func (s *storedLease) SafeFormat(w redact.SafePrinter, _ rune) {
 	w.Printf("ID=%d ver=%d expiration=%s", s.id, s.version, s.expiration)
-}
-
-// getByteSize returns the full size of stored lease.
-func (s *storedLease) getByteSize() int64 {
-	return int64(len(s.prefix)+len(s.sessionID)+int(s.expiration.Size())) +
-		int64(unsafe.Sizeof(*s))
 }
 
 // descriptorVersionState holds the state for a descriptor version. This
@@ -83,9 +75,6 @@ type descriptorVersionState struct {
 		// a node might not necessarily be associated with a lease.
 		lease *storedLease
 	}
-	// byteSize is the size of this structure when it was initially
-	// allocated.
-	byteSize int64
 }
 
 func (s *descriptorVersionState) Release(ctx context.Context) {
@@ -103,25 +92,6 @@ func (s *descriptorVersionState) Expiration(ctx context.Context) hlc.Timestamp {
 // SafeFormat implements redact.SafeFormatter.
 func (s *descriptorVersionState) SafeFormat(w redact.SafePrinter, _ rune) {
 	w.Print(s.redactedString())
-}
-
-// getByteSize returns the size of the structure during the initial
-// allocation.
-func (s *descriptorVersionState) getByteSize() int64 {
-	return s.byteSize
-}
-
-// calculateByteSize initializes the byte size of the structure.
-func (s *descriptorVersionState) calculateByteSize() int64 {
-	// Confirm this is only used to initialize the structure.
-	if s.byteSize != 0 {
-		panic(errors.AssertionFailedf("size calculated after it has already been initialized."))
-	}
-	size := s.ByteSize() + int64(unsafe.Sizeof(*s))
-	if s.mu.lease != nil {
-		size += s.mu.lease.getByteSize()
-	}
-	return size
 }
 
 func (s *descriptorVersionState) String() string {
@@ -150,11 +120,6 @@ func (s *descriptorVersionState) getSessionID() sqlliveness.SessionID {
 // operating) at the given timestamp.
 func (s *descriptorVersionState) hasExpired(ctx context.Context, timestamp hlc.Timestamp) bool {
 	return s.getExpiration(ctx).LessEq(timestamp)
-}
-
-// hasFixedExpiration returns if the descriptor has a fixed expiration.
-func (s *descriptorVersionState) hasFixedExpiration() bool {
-	return s.expiration.Load() != nil
 }
 
 func (s *descriptorVersionState) incRefCount(ctx context.Context, expensiveLogEnabled bool) {

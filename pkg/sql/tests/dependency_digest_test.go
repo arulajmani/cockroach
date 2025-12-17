@@ -12,7 +12,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
-	"github.com/cockroachdb/cockroach/pkg/testutils/skip"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -22,11 +21,9 @@ import (
 
 // TestDependencyDigestOptimization validates that dependency digest information
 // is properly invalidated in the face of modifications for prepared queries.
-// TODO(drewk,michae2): Once statement hints are hooked up, add a case for them.
 func TestDependencyDigestOptimization(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
-	skip.UnderRace(t, "test is too slow under race")
 
 	c := serverutils.StartCluster(t, 3, base.TestClusterArgs{})
 
