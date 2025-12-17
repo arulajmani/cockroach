@@ -5,7 +5,6 @@ go_library(
     srcs = ["pacer.go"],
     importpath = "github.com/cockroachdb/cockroach/pkg/util/taskpacer",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_cockroachdb_crlib//crtime"],
 )
 
 go_test(
@@ -16,7 +15,7 @@ go_test(
     deps = [
         "//pkg/util/leaktest",
         "//pkg/util/log",
-        "@com_github_cockroachdb_crlib//crtime",
+        "//pkg/util/timeutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],

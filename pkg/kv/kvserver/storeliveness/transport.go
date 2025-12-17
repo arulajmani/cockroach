@@ -24,7 +24,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/taskpacer"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
-	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/errors"
 	"google.golang.org/grpc"
 	"storj.io/drpc"
@@ -272,10 +271,10 @@ func (t *Transport) smearingSenderLoop(ctx context.Context) {
 			// pick it up in the next iteration of the for loop.
 
 			// Pace the signalling of the channels.
-			pacer.StartTask(crtime.NowMono())
+			pacer.StartTask(timeutil.Now())
 			workLeft := len(toSignal)
 			for workLeft > 0 {
-				todo, by := pacer.Pace(crtime.NowMono(), workLeft)
+				todo, by := pacer.Pace(timeutil.Now(), workLeft)
 
 				// Pop todo items off the toSignal slice and signal them.
 				for i := 0; i < todo && workLeft > 0; i++ {
@@ -289,7 +288,7 @@ func (t *Transport) smearingSenderLoop(ctx context.Context) {
 				}
 
 				if workLeft > 0 {
-					if wait := by.Sub(crtime.NowMono()); wait > 0 {
+					if wait := timeutil.Until(by); wait > 0 {
 						time.Sleep(wait)
 					}
 				}

@@ -31,7 +31,7 @@ func IngestFiles(
 	}
 
 	db := execCtx.ExecCfg().InternalDB.KV()
-	if err := SplitAndScatterSpans(ctx, db, splits); err != nil {
+	if err := splitAndScatterSpans(ctx, db, splits); err != nil {
 		return err
 	}
 
@@ -58,8 +58,4 @@ func IngestFiles(
 	)
 
 	return res.Err()
-}
-
-func init() {
-	sql.RegisterBulkIngest(IngestFiles)
 }

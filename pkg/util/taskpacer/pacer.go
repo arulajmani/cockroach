@@ -5,11 +5,7 @@
 
 package taskpacer
 
-import (
-	"time"
-
-	"github.com/cockroachdb/crlib/crtime"
-)
+import "time"
 
 // Config is the interface for the configuration of a Pacer.
 type Config interface {
@@ -26,7 +22,7 @@ type Config interface {
 // goroutines smaller, which reduces the overhead on the Go scheduler.
 type Pacer struct {
 	// taskStartTime is the time at which the task started.
-	taskStartTime crtime.Mono
+	taskStartTime time.Time
 	// conf is the configuration for the Pacer.
 	conf Config
 }
@@ -39,14 +35,14 @@ func New(conf Config) *Pacer {
 }
 
 // StartTask marks the start of a new task at the given time.
-func (tp *Pacer) StartTask(now crtime.Mono) {
+func (tp *Pacer) StartTask(now time.Time) {
 	tp.taskStartTime = now
 }
 
 // Pace returns the amount of work that should be done and the time by which it
 // should be done.
 // See the test TestPacer for examples of how to use this method.
-func (tp *Pacer) Pace(now crtime.Mono, workLeft int) (todo int, by crtime.Mono) {
+func (tp *Pacer) Pace(now time.Time, workLeft int) (todo int, by time.Time) {
 	deadline := tp.GetDeadline()
 	timeLeft := deadline.Sub(now)
 	quantum := tp.conf.GetSmear()
@@ -71,6 +67,6 @@ func (tp *Pacer) Pace(now crtime.Mono, workLeft int) (todo int, by crtime.Mono) 
 
 // GetDeadline returns the time at which the current batch of work should be
 // done.
-func (tp *Pacer) GetDeadline() crtime.Mono {
+func (tp *Pacer) GetDeadline() time.Time {
 	return tp.taskStartTime.Add(tp.conf.GetRefresh())
 }

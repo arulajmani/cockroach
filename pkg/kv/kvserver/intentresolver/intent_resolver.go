@@ -35,13 +35,6 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
-// asyncIntentResolutionDisabled disables asynchronous intent resolution. It is
-// similar to DisableAsyncIntentResolution in IntentResolverTestingKnobs, but
-// for the use of roachtests.
-var asyncIntentResolutionDisabled = envutil.EnvOrDefaultBool(
-	"COCKROACH_TEST_ONLY_ASYNC_INTENT_RESOLUTION_DISABLED", false,
-)
-
 // defaultTaskLimit is the maximum number of asynchronous tasks that may be
 // started by intentResolver. When this limit is reached asynchronous tasks will
 // start to block to apply backpressure.  This is a last line of defense against
@@ -498,7 +491,7 @@ func (ir *IntentResolver) MaybePushTransactions(
 func (ir *IntentResolver) runAsyncTask(
 	origCtx context.Context, allowSyncProcessing bool, taskFn func(context.Context),
 ) error {
-	if ir.testingKnobs.DisableAsyncIntentResolution || asyncIntentResolutionDisabled {
+	if ir.testingKnobs.DisableAsyncIntentResolution {
 		return errors.New("intents not processed as async resolution is disabled")
 	}
 	ctx, hdl, err := ir.stopper.GetHandle(

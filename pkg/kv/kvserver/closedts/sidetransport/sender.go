@@ -35,7 +35,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/taskpacer"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
-	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/errors"
 )
 
@@ -685,11 +684,11 @@ func (b *updatesBuf) PaceBroadcastUpdate(ctx context.Context, condVar *sync.Cond
 	pacer := b.mu.pacer
 	b.mu.Unlock()
 
-	pacer.StartTask(crtime.NowMono())
+	pacer.StartTask(timeutil.Now())
 
 	workLeft := originalNumWaiters
 	for workLeft > 0 {
-		todo, by := pacer.Pace(crtime.NowMono(), workLeft)
+		todo, by := pacer.Pace(timeutil.Now(), workLeft)
 
 		b.mu.Lock()
 		for i := 0; i < todo && workLeft > 0; i++ {
@@ -699,7 +698,7 @@ func (b *updatesBuf) PaceBroadcastUpdate(ctx context.Context, condVar *sync.Cond
 		b.mu.Unlock()
 
 		if workLeft > 0 {
-			if wait := by.Sub(crtime.NowMono()); wait > 0 {
+			if wait := timeutil.Until(by); wait > 0 {
 				time.Sleep(wait)
 			}
 		}

@@ -296,9 +296,8 @@ var ( // granter-side metrics (some of these have parallels on the requester sid
 	}
 
 	elasticCPUNanosExhaustedDuration = metric.Metadata{
-		Name: "admission.elastic_cpu.nanos_exhausted_duration",
-		Help: "Total duration (in micros) when elastic CPU tokens (tokens measured in nanoseconds) " +
-			"were exhausted, as observed by the token granter (not waiters)",
+		Name:        "admission.elastic_cpu.nanos_exhausted_duration",
+		Help:        "Total duration when elastic CPU nanoseconds were exhausted, in micros",
 		Measurement: "Microseconds",
 		Unit:        metric.Unit_COUNT,
 	}
@@ -341,7 +340,7 @@ type elasticCPUGranterMetrics struct {
 	MaxAvailableNanos      *metric.Counter
 	AvailableNanos         *metric.Gauge
 	UtilizationLimit       *metric.GaugeFloat64
-	NanosExhaustedDuration *metric.Counter
+	NanosExhaustedDuration *metric.Gauge
 	OverLimitDuration      metric.IHistogram
 
 	Utilization      *metric.GaugeFloat64 // updated every elasticCPUUtilizationMetricInterval, using fields below
@@ -358,7 +357,7 @@ func makeElasticCPUGranterMetrics() *elasticCPUGranterMetrics {
 		PreWorkNanos:           metric.NewCounter(elasticCPUPreWorkNanos),
 		MaxAvailableNanos:      metric.NewCounter(elasticCPUMaxAvailableNanos),
 		AvailableNanos:         metric.NewGauge(elasticCPUAvailableNanos),
-		NanosExhaustedDuration: metric.NewCounter(elasticCPUNanosExhaustedDuration),
+		NanosExhaustedDuration: metric.NewGauge(elasticCPUNanosExhaustedDuration),
 		OverLimitDuration: metric.NewHistogram(metric.HistogramOptions{
 			Mode:         metric.HistogramModePrometheus,
 			Metadata:     elasticCPUOverLimitDurations,

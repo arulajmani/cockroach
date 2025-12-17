@@ -109,7 +109,6 @@ const (
 	OptEnvelope                           = `envelope`
 	OptFormat                             = `format`
 	OptFullTableName                      = `full_table_name`
-	OptHibernationPollingFrequency        = `hibernation_polling_frequency`
 	OptKeyInValue                         = `key_in_value`
 	OptTopicInValue                       = `topic_in_value`
 	OptResolvedTimestamps                 = `resolved`
@@ -401,7 +400,6 @@ var ChangefeedOptionExpectValues = map[string]OptionPermittedValues{
 	OptEnvelope:                           enum("row", "key_only", "wrapped", "deprecated_row", "bare", "enriched"),
 	OptFormat:                             enum("json", "avro", "csv", "experimental_avro", "parquet", "protobuf"),
 	OptFullTableName:                      flagOption,
-	OptHibernationPollingFrequency:        durationOption,
 	OptKeyInValue:                         flagOption,
 	OptTopicInValue:                       flagOption,
 	OptResolvedTimestamps:                 durationOption.thatCanBeZero().orEmptyMeans("0"),
@@ -450,7 +448,7 @@ var CommonOptions = makeStringSet(OptCursor, OptEndTime, OptEnvelope,
 	OptMinCheckpointFrequency, OptMetricsScope, OptVirtualColumns, Topics, OptExpirePTSAfter,
 	OptExecutionLocality, OptLaggingRangesThreshold, OptLaggingRangesPollingInterval,
 	OptIgnoreDisableChangefeedReplication, OptEncodeJSONValueNullAsObject, OptEnrichedProperties,
-	OptRangeDistributionStrategy, OptHibernationPollingFrequency,
+	OptRangeDistributionStrategy,
 )
 
 // SQLValidOptions is options exclusive to SQL sink
@@ -1218,20 +1216,6 @@ func (s StatementOptions) KeyOnly() bool {
 // recorded. Returns nil if not set, and an error if invalid.
 func (s StatementOptions) GetMinCheckpointFrequency() (*time.Duration, error) {
 	return s.getDurationValue(OptMinCheckpointFrequency)
-}
-
-// GetHibernationPollingFrequency returns the frequency with which polling
-// should be performed while the changefeed is waiting for the tableset to be
-// non-empty.
-func (s StatementOptions) GetHibernationPollingFrequency() (*time.Duration, error) {
-	freq, err := s.getDurationValue(OptHibernationPollingFrequency)
-	if err != nil {
-		return nil, err
-	}
-	if freq != nil {
-		return freq, nil
-	}
-	return &DefaultHibernationPollingFrequency, nil
 }
 
 func (s StatementOptions) GetConfluentSchemaRegistry() string {

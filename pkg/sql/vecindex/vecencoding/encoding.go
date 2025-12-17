@@ -199,7 +199,9 @@ func EncodeMetadataValue(metadata cspann.PartitionMetadata) []byte {
 	buf = encoding.EncodeUint64Ascending(buf, uint64(metadata.StateDetails.Source))
 	buf = encoding.EncodeUntaggedTimeValue(buf, metadata.StateDetails.Timestamp)
 
-	return vector.Encode(buf, metadata.Centroid)
+	// vector.Encode never returns a non-nil error, so suppress return value.
+	buf, _ = vector.Encode(buf, metadata.Centroid)
+	return buf
 }
 
 // EncodeRaBitQVector encodes a RaBitQ vector into the given byte slice.
@@ -220,7 +222,7 @@ func EncodeRaBitQVectorFromSet(
 
 // EncodeUnquantizerVector encodes an Unquantizer vector into the given byte
 // slice.
-func EncodeUnquantizerVector(appendTo []byte, v vector.T) []byte {
+func EncodeUnquantizerVector(appendTo []byte, v vector.T) ([]byte, error) {
 	// For backwards compatibility, encode a zero float32. Previously, the
 	// distance of the vector to the centroid was encoded, but that is no longer
 	// necessary.

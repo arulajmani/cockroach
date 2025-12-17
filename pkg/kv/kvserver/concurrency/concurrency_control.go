@@ -554,10 +554,6 @@ type latchManager interface {
 
 	// Metrics returns information about the state of the latchManager.
 	Metrics() LatchMetrics
-
-	// OnRangeDescUpdated informs the latchManager that its range's descriptor has been
-	// updated.
-	OnRangeDescUpdated(desc *roachpb.RangeDescriptor)
 }
 
 // latchGuard is a handle to a set of acquired key latches.

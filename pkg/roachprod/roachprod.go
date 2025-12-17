@@ -35,7 +35,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachprod/agents/opentelemetry"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/agents/parca"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/cloud"
-	cloudcluster "github.com/cockroachdb/cockroach/pkg/roachprod/cloud/types"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/config"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/install"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/lock"
@@ -262,7 +261,7 @@ func CachedClusters(fn func(clusterName string, numVMs int)) {
 }
 
 // CachedCluster returns the cached information about a given cluster.
-func CachedCluster(name string) (*cloudcluster.Cluster, bool) {
+func CachedCluster(name string) (*cloud.Cluster, bool) {
 	return readSyncedClusters(name)
 }
 
@@ -643,7 +642,7 @@ func SetupSSH(ctx context.Context, l *logger.Logger, clusterName string, sync bo
 	if err := LoadClusters(); err != nil {
 		return err
 	}
-	var cloudCluster *cloudcluster.Cluster
+	var cloudCluster *cloud.Cluster
 	if sync {
 		cld, err := Sync(l, vm.ListOptions{})
 		if err != nil {
@@ -3090,7 +3089,7 @@ func GetClusterFromCache(
 
 // getClusterFromCloud finds and returns a specified cluster by querying
 // provider APIs. This also syncs the local cluster cache through ListCloud.
-func getClusterFromCloud(l *logger.Logger, clusterName string) (*cloudcluster.Cluster, error) {
+func getClusterFromCloud(l *logger.Logger, clusterName string) (*cloud.Cluster, error) {
 	// ListCloud may fail due to a transient provider error, but
 	// we may have still found the cluster we care about. It will
 	// fail below if it can't find the cluster.
@@ -3098,9 +3097,9 @@ func getClusterFromCloud(l *logger.Logger, clusterName string) (*cloudcluster.Cl
 	c, ok := cld.Clusters[clusterName]
 	if !ok {
 		if err != nil {
-			return &cloudcluster.Cluster{}, errors.Wrapf(err, "cluster %s not found", clusterName)
+			return &cloud.Cluster{}, errors.Wrapf(err, "cluster %s not found", clusterName)
 		}
-		return &cloudcluster.Cluster{}, fmt.Errorf("cluster %s does not exist", clusterName)
+		return &cloud.Cluster{}, fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
 	return c, nil

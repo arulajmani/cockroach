@@ -22,6 +22,8 @@ import (
 //
 // TODO(pav-kv): move this struct to kvstorage package.
 type snapWriteBuilder struct {
+	id roachpb.FullReplicaID
+
 	todoEng  storage.Engine
 	sl       kvstorage.StateLoader
 	writeSST func(context.Context, func(context.Context, storage.Writer) error) error

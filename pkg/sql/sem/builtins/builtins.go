@@ -109,6 +109,7 @@ import (
 )
 
 var (
+	errEmptyInputString = pgerror.New(pgcode.InvalidParameterValue, "the input string must not be empty")
 	errZeroIP           = pgerror.New(pgcode.InvalidParameterValue, "zero length IP")
 	errChrValueTooSmall = pgerror.New(pgcode.InvalidParameterValue, "input value must be >= 0")
 	errChrValueTooLarge = pgerror.Newf(pgcode.InvalidParameterValue,
@@ -1321,7 +1322,7 @@ var regularBuiltins = map[string]builtinDefinition{
 				for _, ch := range s {
 					return tree.NewDInt(tree.DInt(ch)), nil
 				}
-				return tree.NewDInt(0), nil
+				return nil, errEmptyInputString
 			},
 			types.Int,
 			"Returns the character code of the first character in `val`. Despite the name, the function supports Unicode too.",
@@ -7865,9 +7866,6 @@ table's zone configuration this will return NULL.`,
 				if evalCtx.SQLStatsController == nil {
 					return nil, errors.AssertionFailedf("sql stats controller not set")
 				}
-				// The schema change below requires us to release our current timestamp, otherwise
-				// we may get stuck waiting for leases with locked leasing.
-				evalCtx.Planner.ResetLeaseTimestamp(ctx)
 				if err := evalCtx.SQLStatsController.ResetClusterSQLStats(ctx); err != nil {
 					return nil, err
 				}
@@ -7894,9 +7892,6 @@ table's zone configuration this will return NULL.`,
 				if evalCtx.SQLStatsController == nil {
 					return nil, errors.AssertionFailedf("sql stats controller not set")
 				}
-				// The schema change below requires us to release our current timestamp, otherwise
-				// we may get stuck waiting for leases.
-				evalCtx.Planner.ResetLeaseTimestamp(ctx)
 				if err := evalCtx.SQLStatsController.ResetActivityTables(ctx); err != nil {
 					return nil, err
 				}

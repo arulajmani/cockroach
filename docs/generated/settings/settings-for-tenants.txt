@@ -8,7 +8,6 @@ admission.sql_sql_response.enabled	boolean	true	when true, work performed by the
 bulkio.backup.file_size	byte size	128 MiB	target size for individual data files produced during BACKUP	application
 bulkio.backup.read_timeout	duration	5m0s	amount of time after which a read attempt is considered timed out, which causes the backup to fail	application
 bulkio.backup.read_with_priority_after	duration	1m0s	amount of time since the read-as-of time above which a BACKUP should use priority when retrying reads	application
-bulkio.merge.file_size	byte size	60 MiB	target size for individual data files produced during merge phase	application
 changefeed.aggregator.flush_jitter	float	0.1	jitter aggregator flushes as a fraction of min_checkpoint_frequency. This setting has no effect if min_checkpoint_frequency is set to 0.	application
 changefeed.backfill.concurrent_scan_requests	integer	0	number of concurrent scan requests per node issued during a backfill	application
 changefeed.backfill.scan_request_size	integer	524288	the maximum number of bytes returned by each scan request	application
@@ -103,8 +102,6 @@ kv.transaction.max_intents_bytes	integer	4194304	maximum number of bytes used to
 kv.transaction.max_refresh_spans_bytes	integer	4194304	maximum number of bytes used to track refresh spans in serializable transactions	application
 kv.transaction.randomized_anchor_key.enabled	boolean	false	dictates whether a transactions anchor key is randomized or not	application
 kv.transaction.reject_over_max_intents_budget.enabled	boolean	false	if set, transactions that exceed their lock tracking budget (kv.transaction.max_intents_bytes) are rejected instead of having their lock spans imprecisely compressed	application
-kv.transaction.write_buffering.enabled	boolean	true	if enabled, transactional writes are buffered on the client	application
-kv.transaction.write_buffering.max_buffer_size	byte size	4.0 MiB	if non-zero, defines that maximum size of the buffer that will be used to buffer transactional writes per-transaction	application
 kv.transaction.write_pipelining.locking_reads.enabled	boolean	true	if enabled, transactional locking reads are pipelined through Raft consensus	application
 kv.transaction.write_pipelining.ranged_writes.enabled	boolean	true	if enabled, transactional ranged writes are pipelined through Raft consensus	application
 kv.transaction.write_pipelining.enabled (alias: kv.transaction.write_pipelining_enabled)	boolean	true	if enabled, transactional writes are pipelined through Raft consensus	application
@@ -180,7 +177,7 @@ sql.auth.change_own_password.enabled	boolean	false	controls whether a user is al
 sql.auth.grant_option_for_owner.enabled	boolean	true	determines whether the GRANT OPTION for privileges is implicitly given to the owner of an object	application
 sql.auth.grant_option_inheritance.enabled	boolean	true	determines whether the GRANT OPTION for privileges is inherited through role membership	application
 sql.auth.public_schema_create_privilege.enabled	boolean	true	determines whether to grant all users the CREATE privileges on the public schema when it is created	application
-sql.catalog.allow_leased_descriptors.enabled	boolean	true	if true, catalog views (crdb_internal, information_schema, pg_catalog) can use leased descriptors for improved performance	application
+sql.catalog.allow_leased_descriptors.enabled	boolean	false	if true, catalog views (crdb_internal, information_schema, pg_catalog) can use leased descriptors for improved performance	application
 sql.closed_session_cache.capacity	integer	1000	the maximum number of sessions in the cache	application
 sql.closed_session_cache.time_to_live	integer	3600	the maximum time to live, in seconds	application
 sql.contention.event_store.capacity	byte size	64 MiB	the in-memory storage capacity per-node of contention event store	application
@@ -428,4 +425,4 @@ trace.zipkin.collector	string		the address of a Zipkin instance to receive trace
 ui.database_locality_metadata.enabled	boolean	true	if enabled shows extended locality data about databases and tables in DB Console which can be expensive to compute	application
 ui.default_timezone	string		the default timezone used to format timestamps in the ui	application
 ui.display_timezone	enumeration	etc/utc	the timezone used to format timestamps in the ui. This setting is deprecatedand will be removed in a future version. Use the 'ui.default_timezone' setting instead. 'ui.default_timezone' takes precedence over this setting. [etc/utc = 0, america/new_york = 1]	application
-version	version	1000025.4-upgrading-to-1000026.1-step-006	set the active cluster version in the format '<major>.<minor>'	application
+version	version	25.4-upgrading-to-26.1-step-006	set the active cluster version in the format '<major>.<minor>'	application

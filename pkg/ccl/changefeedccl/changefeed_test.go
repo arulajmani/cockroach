@@ -168,6 +168,7 @@ func TestChangefeedBasics(t *testing.T) {
 func TestDatabaseLevelChangefeedBasics(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
 		sqlDB := sqlutils.MakeSQLRunner(s.DB)
@@ -219,6 +220,7 @@ func TestDatabaseLevelChangefeedBasics(t *testing.T) {
 func TestDatabaseLevelChangefeedWithFilter(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	type testCase struct {
 		name             string
@@ -377,6 +379,7 @@ func TestDatabaseLevelChangefeedWithFilter(t *testing.T) {
 func TestDatabaseLevelChangefeedNameResolutionIsSearchPathIndependent(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	type testCase struct {
 		name             string
@@ -1204,6 +1207,7 @@ func TestChangefeedDiff(t *testing.T) {
 func TestDatabaseLevelChangefeedDiff(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
 		sqlDB := sqlutils.MakeSQLRunner(s.DB)
@@ -1326,6 +1330,7 @@ func TestMissingTableErr(t *testing.T) {
 func TestChangefeedMissingDatabaseErr(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 	cdcTest(t, func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
 		expectErrCreatingFeed(t, f, `CREATE CHANGEFEED FOR DATABASE foo`, `database "foo" does not exist`)
 	})
@@ -1334,6 +1339,7 @@ func TestChangefeedMissingDatabaseErr(t *testing.T) {
 func TestChangefeedCannotTargetSystemDatabaseErr(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 	cdcTest(t, func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
 		expectErrCreatingFeed(t, f, `CREATE CHANGEFEED FOR DATABASE system`, `changefeed cannot target the system database`)
 	})
@@ -1424,6 +1430,7 @@ func TestChangefeedFullTableName(t *testing.T) {
 func TestDatabaseLevelChangefeedWithFullTableName(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
 		sqlDB := sqlutils.MakeSQLRunner(s.DB)
@@ -4187,14 +4194,11 @@ func TestChangefeedCreateAuthorizationWithChangefeedPriv(t *testing.T) {
 
 	rootDB.Exec(t, `CREATE EXTERNAL CONNECTION "nope" AS 'kafka://nope'`)
 
+	// TODO(#154053): also test each of these for database level changefeeds once implemented
 	withUser(t, "user1", func(userDB *sqlutils.SQLRunner) {
 		userDB.ExpectErr(t,
 			`user "user1" requires the CHANGEFEED privilege on all target tables to be able to run an enterprise changefeed`,
 			"CREATE CHANGEFEED FOR table_a, table_b INTO 'external://nope'",
-		)
-		userDB.ExpectErr(t,
-			`user "user1" requires the CHANGEFEED privilege on the target database to be able to run an enterprise changefeed`,
-			"CREATE CHANGEFEED FOR DATABASE defaultdb INTO 'kafka://nope'",
 		)
 	})
 	rootDB.Exec(t, "GRANT CHANGEFEED ON table_a TO user1")
@@ -4203,19 +4207,11 @@ func TestChangefeedCreateAuthorizationWithChangefeedPriv(t *testing.T) {
 			`user "user1" requires the CHANGEFEED privilege on all target tables to be able to run an enterprise changefeed`,
 			"CREATE CHANGEFEED FOR table_a, table_b INTO 'external://nope'",
 		)
-		userDB.ExpectErr(t,
-			`user "user1" requires the CHANGEFEED privilege on the target database to be able to run an enterprise changefeed`,
-			"CREATE CHANGEFEED FOR DATABASE defaultdb INTO 'kafka://nope'",
-		)
 	})
 	rootDB.Exec(t, "GRANT CHANGEFEED ON table_b TO user1")
 	withUser(t, "user1", func(userDB *sqlutils.SQLRunner) {
 		userDB.Exec(t,
 			"CREATE CHANGEFEED FOR table_a, table_b INTO 'external://nope'",
-		)
-		userDB.ExpectErr(t,
-			`user "user1" requires the CHANGEFEED privilege on the target database to be able to run an enterprise changefeed`,
-			"CREATE CHANGEFEED FOR DATABASE defaultdb INTO 'kafka://nope'",
 		)
 	})
 
@@ -4227,20 +4223,11 @@ func TestChangefeedCreateAuthorizationWithChangefeedPriv(t *testing.T) {
 			"pq: the CHANGEFEED privilege on all target tables can only be used with external connection sinks",
 			"CREATE CHANGEFEED FOR table_a, table_b INTO 'kafka://nope'",
 		)
-		userDB.ExpectErr(t,
-			"pq: the CHANGEFEED privilege on the target database can only be used with external connection sinks",
-			"CREATE CHANGEFEED FOR DATABASE defaultdb INTO 'kafka://nope'",
-		)
 	})
 	rootDB.Exec(t, "GRANT USAGE ON EXTERNAL CONNECTION nope to user1")
 	withUser(t, "user1", func(userDB *sqlutils.SQLRunner) {
 		userDB.Exec(t,
 			"CREATE CHANGEFEED FOR table_a, table_b INTO 'external://nope'",
-		)
-	})
-	withUser(t, "user1", func(userDB *sqlutils.SQLRunner) {
-		userDB.Exec(t,
-			"CREATE CHANGEFEED FOR DATABASE defaultdb INTO 'external://nope'",
 		)
 	})
 	rootDB.Exec(t, "SET CLUSTER SETTING changefeed.permissions.require_external_connection_sink.enabled = false")
@@ -12832,6 +12819,7 @@ func TestChangefeedBareFullProtobuf(t *testing.T) {
 func TestDatabaseLevelChangefeedRenameDatabase(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
 		sqlDB := sqlutils.MakeSQLRunner(s.DB)
@@ -12862,6 +12850,7 @@ func TestDatabaseLevelChangefeedRenameDatabase(t *testing.T) {
 func TestDatabaseLevelChangefeedRenameTable(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
 		sqlDB := sqlutils.MakeSQLRunner(s.DB)
@@ -12922,6 +12911,7 @@ func TestCreateTableLevelChangefeedWithDBPrivilege(t *testing.T) {
 func TestDatabaseLevelChangefeedChangingTableset(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	makeKnobs := func(createTableCh chan struct{}) func(*base.TestingKnobs) {
 		return func(knobs *base.TestingKnobs) {
@@ -13068,6 +13058,7 @@ func TestDatabaseLevelChangefeedChangingTableset(t *testing.T) {
 func TestDatabaseLevelChangefeedWithInitialScanOptions(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	type testCase struct {
 		name             string
@@ -13163,6 +13154,7 @@ func TestDatabaseLevelChangefeedWithInitialScanOptions(t *testing.T) {
 func TestDatabaseLevelChangefeedSkipOfflineTables(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	skip.WithIssue(t, 154053, "unreleased feature")
 
 	dataSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
@@ -13280,207 +13272,4 @@ func TestDatabaseLevelChangefeedSkipOfflineTables(t *testing.T) {
 	// DB-level changefeeds do not yet add newly created tables to the
 	// changefeed when they are restored, and dropping an included table to
 	// restore it will fail the feed.
-}
-
-// TestDatabaseLevelChangefeedEmptyTableset tests that a database-level changefeed
-// hibernates while there are no tables in the database.
-func TestDatabaseLevelChangefeedEmptyTableset(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-
-	testFnNoWait := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
-		sqlDB := sqlutils.MakeSQLRunner(s.DB)
-		sqlDB.Exec(t, `CREATE DATABASE db`)
-		sqlDB.Exec(t, `GRANT CHANGEFEED ON DATABASE db TO enterprisefeeduser`)
-		dbcf := feed(t, f, `CREATE CHANGEFEED FOR DATABASE db`)
-		defer closeFeed(t, dbcf)
-
-		// create a table
-		sqlDB.Exec(t, `CREATE TABLE db.foo (a INT PRIMARY KEY, b STRING)`)
-		sqlDB.Exec(t, `INSERT INTO db.foo VALUES (0, 'initial')`)
-
-		assertPayloads(t, dbcf, []string{
-			`foo: [0]->{"after": {"a": 0, "b": "initial"}}`,
-		})
-	}
-	cdcTest(t, testFnNoWait, feedTestEnterpriseSinks)
-
-	testFnWait := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
-		sqlDB := sqlutils.MakeSQLRunner(s.DB)
-		sqlDB.Exec(t, `CREATE DATABASE db`)
-		sqlDB.Exec(t, `GRANT CHANGEFEED ON DATABASE db TO enterprisefeeduser`)
-		dbcf := feed(t, f, `CREATE CHANGEFEED FOR DATABASE db`)
-		defer closeFeed(t, dbcf)
-
-		time.Sleep(5 * time.Second)
-
-		// create a table
-		sqlDB.Exec(t, `CREATE TABLE db.foo (a INT PRIMARY KEY, b STRING)`)
-		sqlDB.Exec(t, `INSERT INTO db.foo VALUES (0, 'initial')`)
-
-		assertPayloads(t, dbcf, []string{
-			`foo: [0]->{"after": {"a": 0, "b": "initial"}}`,
-		})
-	}
-	cdcTest(t, testFnWait, feedTestEnterpriseSinks)
-}
-
-// TestDatabaseLevelChangefeedHibernationPollingFrequency tests that
-// the hibernation polling frequency option is correctly validated for
-// database-level changefeeds and fails for table-level changefeeds.
-// The hibernation polling frequency is only supported for database-level
-// changefeeds.
-func TestDatabaseLevelChangefeedHibernationPollingFrequency(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-
-	testCreateFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
-		sqlDB := sqlutils.MakeSQLRunner(s.DB)
-		sqlDB.Exec(t, `CREATE DATABASE db`)
-		sqlDB.Exec(t, `GRANT CHANGEFEED ON DATABASE db TO enterprisefeeduser`)
-
-		dbcf := feed(t, f, `CREATE CHANGEFEED FOR DATABASE db WITH hibernation_polling_frequency='1s'`)
-		defer closeFeed(t, dbcf)
-
-		sqlDB.Exec(t, `CREATE TABLE db.foo (a INT PRIMARY KEY, b STRING)`)
-		sqlDB.Exec(t, `INSERT INTO db.foo VALUES (0, 'initial')`)
-
-		assertPayloads(t, dbcf, []string{
-			`foo: [0]->{"after": {"a": 0, "b": "initial"}}`,
-		})
-
-		expectErrCreatingFeed(t, f, `CREATE CHANGEFEED FOR db.foo WITH hibernation_polling_frequency='1s'`, "hibernation_polling_frequency is only supported for database-level changefeeds")
-	}
-	cdcTest(t, testCreateFn, feedTestEnterpriseSinks)
-
-	opts := changefeedbase.MakeStatementOptions(map[string]string{
-		changefeedbase.OptHibernationPollingFrequency: "2s",
-	})
-
-	tableDetails := jobspb.ChangefeedDetails{
-		TargetSpecifications: []jobspb.ChangefeedTargetSpecification{{
-			Type: jobspb.ChangefeedTargetSpecification_PRIMARY_FAMILY_ONLY,
-		}},
-	}
-	if err := validateDetailsAndOptions(tableDetails, opts); err == nil {
-		t.Fatalf("expected error when %q is set for table-level changefeed",
-			changefeedbase.OptHibernationPollingFrequency)
-	}
-
-	dbDetails := jobspb.ChangefeedDetails{
-		TargetSpecifications: []jobspb.ChangefeedTargetSpecification{{
-			Type: jobspb.ChangefeedTargetSpecification_DATABASE,
-		}},
-	}
-	if err := validateDetailsAndOptions(dbDetails, opts); err != nil {
-		t.Fatalf("unexpected error for db-level changefeed: %v", err)
-	}
-}
-
-// TestDatabaseLevelChangefeedFiltersHibernation tests that a database-level changefeed
-// with include/exclude filters correctly handles hibernation:
-//   - With EXCLUDE filter: creating an excluded table should not wake the changefeed,
-//     but creating a non-excluded table should wake it.
-//   - With INCLUDE filter: creating a non-included table should not wake the changefeed,
-//     but creating an included table should wake it.
-func TestDatabaseLevelChangefeedFiltersHibernation(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-
-	full_filter := map[string]string{
-		"include": "EXCLUDE TABLES excluded_table",
-		"exclude": "INCLUDE TABLES included_table",
-	}
-	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory, filterType string) {
-		sqlDB := sqlutils.MakeSQLRunner(s.DB)
-		sqlDB.Exec(t, `CREATE DATABASE db`)
-		sqlDB.Exec(t, `GRANT CHANGEFEED ON DATABASE db TO enterprisefeeduser`)
-
-		// Create changefeed with exclude filter - should hibernate since no tables exist
-		createStmt := fmt.Sprintf(`CREATE CHANGEFEED FOR DATABASE db %s`, full_filter[filterType])
-		dbcf := feed(t, f, createStmt)
-		defer closeFeed(t, dbcf)
-
-		var jobID jobspb.JobID
-		if ef, ok := dbcf.(cdctest.EnterpriseTestFeed); ok {
-			jobID = ef.JobID()
-		} else {
-			t.Fatal("expected EnterpriseTestFeed")
-		}
-
-		// Get initial diagram count (should be 0 when hibernating, as no diagram is written yet)
-		getDiagramCount := func() int {
-			var count int
-			sqlDB.QueryRow(t,
-				`SELECT count(*) FROM system.job_info WHERE job_id = $1 AND info_key LIKE '~dsp-diag-url-%'`,
-				jobID,
-			).Scan(&count)
-			return count
-		}
-
-		testutils.SucceedsSoon(t, func() error {
-			var count int
-			sqlDB.QueryRow(t,
-				`SELECT count(*) FROM [SHOW CHANGEFEED JOB $1] WHERE running_status = 'running'`,
-				jobID,
-			).Scan(&count)
-			return nil
-		})
-		require.Equal(t, 0, getDiagramCount(), "changefeed should be hibernating (no diagram written)")
-		time.Sleep(20 * time.Second)
-		require.Equal(t, 0, getDiagramCount(), "changefeed should stay hibernating (no diagram written)")
-
-		// Create a table that is excluded - changefeed should stay hibernating
-		sqlDB.Exec(t, `CREATE TABLE db.excluded_table (a INT PRIMARY KEY, b STRING)`)
-		sqlDB.Exec(t, `INSERT INTO db.excluded_table VALUES (0, 'excluded')`)
-
-		// // Verify changefeed stays hibernating (no new diagram written)
-		time.Sleep(20 * time.Second)
-		require.Equal(t, 0, getDiagramCount(), "changefeed should stay hibernating (no new diagram written)")
-
-		// Create a table that is NOT excluded - changefeed should wake up
-		sqlDB.Exec(t, `CREATE TABLE db.included_table (a INT PRIMARY KEY, b STRING)`)
-		sqlDB.Exec(t, `INSERT INTO db.included_table VALUES (0, 'included')`)
-
-		// Wait for a new diagram to be written (indicating changefeed woke up)
-		time.Sleep(20 * time.Second)
-		require.Equal(t, 1, getDiagramCount(), "changefeed should wake up (new diagram written)")
-
-		// Should only receive events from the included table
-		assertPayloads(t, dbcf, []string{
-			`included_table: [0]->{"after": {"a": 0, "b": "included"}}`,
-		})
-	}
-	testutils.RunValues(t, "filterType", []string{"include", "exclude"}, func(t *testing.T, filterType string) {
-		runTestFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
-			testFn(t, s, f, filterType)
-		}
-		cdcTest(t, runTestFn, feedTestEnterpriseSinks)
-	})
-}
-
-// TestChangefeedWatcherCleanupOnStop verifies that the watcher context is properly
-// cleaned up when a changefeed is stopped before receiving any table diffs.
-func TestChangefeedWatcherCleanupOnStop(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-
-	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
-		sqlDB := sqlutils.MakeSQLRunner(s.DB)
-
-		sqlDB.Exec(t, `CREATE DATABASE db`)
-		sqlDB.Exec(t, `GRANT CHANGEFEED ON DATABASE db TO enterprisefeeduser`)
-
-		feed, err := f.Feed(`CREATE CHANGEFEED FOR DATABASE db`)
-		require.NoError(t, err)
-		enterpriseFeed := feed.(cdctest.EnterpriseTestFeed)
-		waitForJobState(sqlDB, t, enterpriseFeed.JobID(), jobs.StateRunning)
-
-		sqlDB.Exec(t, `CANCEL JOB $1`, enterpriseFeed.JobID())
-		waitForJobState(sqlDB, t, enterpriseFeed.JobID(), jobs.StateCanceled)
-
-		require.NoError(t, feed.Close())
-	}
-
-	cdcTest(t, testFn, feedTestEnterpriseSinks)
 }

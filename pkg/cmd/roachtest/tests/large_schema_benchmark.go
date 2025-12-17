@@ -200,19 +200,8 @@ func registerLargeSchemaBenchmark(r registry.Registry, numTables int, isMultiReg
 				"apiCalls",
 				0755,
 				c.WorkloadNode()))
-
-			// Determine which nodes to use for the workload. In multi-region mode,
-			// we only connect to nodes in the same region as the workload node to
-			// avoid cross-region latency being included in query latency measurements.
-			// The zone assignment pattern is: us-east1, us-west1, us-central1 repeating,
-			// so nodes 1, 4, 7 are in us-east1 (same region as workload node 10).
-			localNodes := c.CRDBNodes()
-			if isMultiRegion {
-				localNodes = c.Nodes(1, 4, 7)
-			}
-
-			// Get a list of web console URLs for local nodes only.
-			webConsoleURLs, err := c.ExternalAdminUIAddr(ctx, t.L(), localNodes)
+			// Get a list of web console URLs.
+			webConsoleURLs, err := c.ExternalAdminUIAddr(ctx, t.L(), c.Range(1, c.Spec().NodeCount-1))
 			require.NoError(t, err)
 			for urlIdx := range webConsoleURLs {
 				webConsoleURLs[urlIdx] = "https://" + webConsoleURLs[urlIdx]
@@ -241,16 +230,6 @@ func registerLargeSchemaBenchmark(r registry.Registry, numTables int, isMultiReg
 							workloadInstance{
 								nodes:          c.CRDBNodes(),
 								prometheusPort: 5050,
-							},
-						)
-					} else {
-						// For active databases, connect only to local nodes to avoid
-						// cross-region latency in measurements.
-						wlInstance = append(
-							wlInstance,
-							workloadInstance{
-								nodes:          localNodes,
-								prometheusPort: 2112,
 							},
 						)
 					}

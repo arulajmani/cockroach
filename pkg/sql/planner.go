@@ -1161,8 +1161,3 @@ func (p *planner) UsingHintInjection() bool {
 func (p *planner) GetHintIDs() []int64 {
 	return p.stmt.HintIDs
 }
-
-// ResetLeaseTimestamp is part of Planner interface.
-func (p *planner) ResetLeaseTimestamp(ctx context.Context) {
-	p.Descriptors().ResetLeaseTimestamp(ctx)
-}
