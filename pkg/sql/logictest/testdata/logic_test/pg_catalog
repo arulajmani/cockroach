@@ -1,4 +1,4 @@
-# LogicTest: local local-leased-descriptors
+# LogicTest: local
 
 # Set the distsql_workmem to the default production value because of a problem
 # with losing 'name' attribute when spilling to disk (#78547).
@@ -429,8 +429,8 @@ SELECT * FROM pg_catalog.pg_namespace
 oid         nspname             nspowner    nspacl
 4294967295  crdb_internal       3233629770  NULL
 4294967180  information_schema  3233629770  NULL
-4294967092  pg_catalog          3233629770  NULL
-4294966962  pg_extension        3233629770  NULL
+4294967093  pg_catalog          3233629770  NULL
+4294966963  pg_extension        3233629770  NULL
 105         public              1546506610  NULL
 
 # Verify that we can still see the schemas even if we don't have any privilege
@@ -448,8 +448,8 @@ SELECT * FROM pg_catalog.pg_namespace
 oid         nspname             nspowner    nspacl
 4294967295  crdb_internal       3233629770  NULL
 4294967180  information_schema  3233629770  NULL
-4294967092  pg_catalog          3233629770  NULL
-4294966962  pg_extension        3233629770  NULL
+4294967093  pg_catalog          3233629770  NULL
+4294966963  pg_extension        3233629770  NULL
 105         public              1546506610  NULL
 
 user root
@@ -1258,7 +1258,6 @@ indexrelid  indrelid  indnatts  indisunique  indnullsnotdistinct  indisprimary  
 3919862795  62        2         false        false                false         false           false         false           true        false         false       true       false           1 14                    0 0                        0 0            2 1            NULL      NULL                                                                                                                          2
 3966258450  14        1         true         false                true          false           true          false           true        false         false       true       false           1                       3403232968                 0              2              NULL      NULL                                                                                                                          1
 4012654114  30        3         true         false                true          false           true          false           true        false         false       true       false           1 2 3                   0 0 3403232968             0 0 0          2 2 2          NULL      NULL                                                                                                                          3
-4040412065  77        2         true         false                true          false           true          false           true        false         false       true       false           1 2                     0 0                        0 0            2 2            NULL      NULL                                                                                                                          2
 4133203393  45        2         true         false                true          false           true          false           true        false         false       true       false           1 2                     0 0                        0 0            2 2            NULL      NULL                                                                                                                          2
 4179599057  61        5         true         false                true          false           true          false           true        false         false       true       false           1 2 3 4 5               0 0 0 0 3403232968         0 0 0 0 0      2 2 2 2 2      NULL      NULL                                                                                                                          5
 4179599058  61        2         false        false                false         false           false         false           true        false         false       true       false           2 3                     0 0                        0 0            2 2            NULL      NULL                                                                                                                          2
@@ -1521,8 +1520,6 @@ indexrelid  operator_argument_type_oid  operator_argument_position
 4012654114  0                           1
 4012654114  0                           2
 4012654114  0                           3
-4040412065  0                           1
-4040412065  0                           2
 4133203393  0                           1
 4133203393  0                           2
 4179599057  0                           1
@@ -1557,7 +1554,7 @@ SELECT * FROM pg_collation
 WHERE collname='en-US'
 ----
 oid         collname  collnamespace  collowner  collencoding  collcollate  collctype  collprovider  collversion  collisdeterministic
-3903121477  en-US     4294967092     NULL       6             NULL         NULL       NULL          NULL         NULL
+3903121477  en-US     4294967093     NULL       6             NULL         NULL       NULL          NULL         NULL
 
 user testuser
 
@@ -1756,16 +1753,16 @@ FROM pg_catalog.pg_depend
 ORDER BY objid, refobjid, refobjsubid
 ----
 classid     objid       objsubid  refclassid  refobjid    refobjsubid  deptype
-4294967080  111         0         4294967080  110         14           i
-4294967080  112         0         4294967080  110         15           i
-4294967034  842401391   0         4294967080  110         1            n
-4294967034  842401391   0         4294967080  110         2            n
-4294967034  842401391   0         4294967080  110         3            n
-4294967034  842401391   0         4294967080  110         4            n
-4294967077  1179276562  0         4294967080  3687884464  0            n
-4294967077  3935750373  0         4294967080  3687884465  0            n
-4294967077  4072017905  0         4294967080  0           0            n
-4294967077  4170826110  0         4294967080  0           0            n
+4294967081  111         0         4294967081  110         14           i
+4294967081  112         0         4294967081  110         15           i
+4294967035  842401391   0         4294967081  110         1            n
+4294967035  842401391   0         4294967081  110         2            n
+4294967035  842401391   0         4294967081  110         3            n
+4294967035  842401391   0         4294967081  110         4            n
+4294967078  1179276562  0         4294967081  3687884464  0            n
+4294967078  3935750373  0         4294967081  3687884465  0            n
+4294967078  4072017905  0         4294967081  0           0            n
+4294967078  4170826110  0         4294967081  0           0            n
 
 statement ok
 CREATE TABLE t_with_pk_seq (a INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, b INT);
@@ -1816,9 +1813,9 @@ JOIN pg_class cla ON classid=cla.oid
 JOIN pg_class refcla ON refclassid=refcla.oid
 ----
 classid     refclassid  tablename      reftablename
-4294967034  4294967080  pg_rewrite     pg_class
-4294967080  4294967080  pg_class       pg_class
-4294967077  4294967080  pg_constraint  pg_class
+4294967035  4294967081  pg_rewrite     pg_class
+4294967081  4294967081  pg_class       pg_class
+4294967078  4294967081  pg_constraint  pg_class
 
 # Some entries in pg_depend are foreign key constraints that reference an index
 # in pg_class. Other entries are table-view dependencies
@@ -1918,102 +1915,102 @@ WHERE oid < 4194967002 -- exclude implicit types for virtual tables
 ORDER BY oid
 ----
 oid     typname                typnamespace  typowner    typlen  typbyval  typtype
-16      bool                   4294967092    NULL        1       true      b
-17      bytea                  4294967092    NULL        -1      false     b
-18      char                   4294967092    NULL        1       true      b
-19      name                   4294967092    NULL        -1      false     b
-20      int8                   4294967092    NULL        8       true      b
-21      int2                   4294967092    NULL        2       true      b
-22      int2vector             4294967092    NULL        -1      false     b
-23      int4                   4294967092    NULL        4       true      b
-24      regproc                4294967092    NULL        4       true      b
-25      text                   4294967092    NULL        -1      false     b
-26      oid                    4294967092    NULL        4       true      b
-30      oidvector              4294967092    NULL        -1      false     b
-700     float4                 4294967092    NULL        4       true      b
-701     float8                 4294967092    NULL        8       true      b
-705     unknown                4294967092    NULL        0       true      b
-869     inet                   4294967092    NULL        24      true      b
-1000    _bool                  4294967092    NULL        -1      false     b
-1001    _bytea                 4294967092    NULL        -1      false     b
-1002    _char                  4294967092    NULL        -1      false     b
-1003    _name                  4294967092    NULL        -1      false     b
-1005    _int2                  4294967092    NULL        -1      false     b
-1006    _int2vector            4294967092    NULL        -1      false     b
-1007    _int4                  4294967092    NULL        -1      false     b
-1008    _regproc               4294967092    NULL        -1      false     b
-1009    _text                  4294967092    NULL        -1      false     b
-1013    _oidvector             4294967092    NULL        -1      false     b
-1014    _bpchar                4294967092    NULL        -1      false     b
-1015    _varchar               4294967092    NULL        -1      false     b
-1016    _int8                  4294967092    NULL        -1      false     b
-1021    _float4                4294967092    NULL        -1      false     b
-1022    _float8                4294967092    NULL        -1      false     b
-1028    _oid                   4294967092    NULL        -1      false     b
-1041    _inet                  4294967092    NULL        -1      false     b
-1042    bpchar                 4294967092    NULL        -1      false     b
-1043    varchar                4294967092    NULL        -1      false     b
-1082    date                   4294967092    NULL        4       true      b
-1083    time                   4294967092    NULL        8       true      b
-1114    timestamp              4294967092    NULL        8       true      b
-1115    _timestamp             4294967092    NULL        -1      false     b
-1182    _date                  4294967092    NULL        -1      false     b
-1183    _time                  4294967092    NULL        -1      false     b
-1184    timestamptz            4294967092    NULL        8       true      b
-1185    _timestamptz           4294967092    NULL        -1      false     b
-1186    interval               4294967092    NULL        24      true      b
-1187    _interval              4294967092    NULL        -1      false     b
-1231    _numeric               4294967092    NULL        -1      false     b
-1266    timetz                 4294967092    NULL        12      true      b
-1270    _timetz                4294967092    NULL        -1      false     b
-1560    bit                    4294967092    NULL        -1      false     b
-1561    _bit                   4294967092    NULL        -1      false     b
-1562    varbit                 4294967092    NULL        -1      false     b
-1563    _varbit                4294967092    NULL        -1      false     b
-1700    numeric                4294967092    NULL        -1      false     b
-1790    refcursor              4294967092    NULL        -1      false     b
-2201    _refcursor             4294967092    NULL        -1      false     b
-2202    regprocedure           4294967092    NULL        4       true      b
-2205    regclass               4294967092    NULL        4       true      b
-2206    regtype                4294967092    NULL        4       true      b
-2207    _regprocedure          4294967092    NULL        -1      false     b
-2210    _regclass              4294967092    NULL        -1      false     b
-2211    _regtype               4294967092    NULL        -1      false     b
-2249    record                 4294967092    NULL        0       true      p
-2276    any                    4294967092    NULL        -1      false     p
-2277    anyarray               4294967092    NULL        -1      false     p
-2278    void                   4294967092    NULL        0       true      p
-2279    trigger                4294967092    NULL        4       true      p
-2283    anyelement             4294967092    NULL        -1      false     p
-2287    _record                4294967092    NULL        -1      false     b
-2950    uuid                   4294967092    NULL        16      true      b
-2951    _uuid                  4294967092    NULL        -1      false     b
-3220    pg_lsn                 4294967092    NULL        8       true      b
-3221    _pg_lsn                4294967092    NULL        -1      false     b
-3614    tsvector               4294967092    NULL        -1      false     b
-3615    tsquery                4294967092    NULL        -1      false     b
-3643    _tsvector              4294967092    NULL        -1      false     b
-3645    _tsquery               4294967092    NULL        -1      false     b
-3802    jsonb                  4294967092    NULL        -1      false     b
-3807    _jsonb                 4294967092    NULL        -1      false     b
-4072    jsonpath               4294967092    NULL        -1      false     b
-4073    _jsonpath              4294967092    NULL        -1      false     b
-4089    regnamespace           4294967092    NULL        4       true      b
-4090    _regnamespace          4294967092    NULL        -1      false     b
-4096    regrole                4294967092    NULL        4       true      b
-4097    _regrole               4294967092    NULL        -1      false     b
-90000   geometry               4294967092    NULL        -1      false     b
-90001   _geometry              4294967092    NULL        -1      false     b
-90002   geography              4294967092    NULL        -1      false     b
-90003   _geography             4294967092    NULL        -1      false     b
-90004   box2d                  4294967092    NULL        32      true      b
-90005   _box2d                 4294967092    NULL        -1      false     b
-90006   vector                 4294967092    NULL        -1      false     b
-90007   _vector                4294967092    NULL        -1      false     b
-90008   citext                 4294967092    NULL        -1      false     b
-90009   _citext                4294967092    NULL        -1      false     b
-90010   ltree                  4294967092    NULL        -1      false     b
-90011   _ltree                 4294967092    NULL        -1      false     b
+16      bool                   4294967093    NULL        1       true      b
+17      bytea                  4294967093    NULL        -1      false     b
+18      char                   4294967093    NULL        1       true      b
+19      name                   4294967093    NULL        -1      false     b
+20      int8                   4294967093    NULL        8       true      b
+21      int2                   4294967093    NULL        2       true      b
+22      int2vector             4294967093    NULL        -1      false     b
+23      int4                   4294967093    NULL        4       true      b
+24      regproc                4294967093    NULL        4       true      b
+25      text                   4294967093    NULL        -1      false     b
+26      oid                    4294967093    NULL        4       true      b
+30      oidvector              4294967093    NULL        -1      false     b
+700     float4                 4294967093    NULL        4       true      b
+701     float8                 4294967093    NULL        8       true      b
+705     unknown                4294967093    NULL        0       true      b
+869     inet                   4294967093    NULL        24      true      b
+1000    _bool                  4294967093    NULL        -1      false     b
+1001    _bytea                 4294967093    NULL        -1      false     b
+1002    _char                  4294967093    NULL        -1      false     b
+1003    _name                  4294967093    NULL        -1      false     b
+1005    _int2                  4294967093    NULL        -1      false     b
+1006    _int2vector            4294967093    NULL        -1      false     b
+1007    _int4                  4294967093    NULL        -1      false     b
+1008    _regproc               4294967093    NULL        -1      false     b
+1009    _text                  4294967093    NULL        -1      false     b
+1013    _oidvector             4294967093    NULL        -1      false     b
+1014    _bpchar                4294967093    NULL        -1      false     b
+1015    _varchar               4294967093    NULL        -1      false     b
+1016    _int8                  4294967093    NULL        -1      false     b
+1021    _float4                4294967093    NULL        -1      false     b
+1022    _float8                4294967093    NULL        -1      false     b
+1028    _oid                   4294967093    NULL        -1      false     b
+1041    _inet                  4294967093    NULL        -1      false     b
+1042    bpchar                 4294967093    NULL        -1      false     b
+1043    varchar                4294967093    NULL        -1      false     b
+1082    date                   4294967093    NULL        4       true      b
+1083    time                   4294967093    NULL        8       true      b
+1114    timestamp              4294967093    NULL        8       true      b
+1115    _timestamp             4294967093    NULL        -1      false     b
+1182    _date                  4294967093    NULL        -1      false     b
+1183    _time                  4294967093    NULL        -1      false     b
+1184    timestamptz            4294967093    NULL        8       true      b
+1185    _timestamptz           4294967093    NULL        -1      false     b
+1186    interval               4294967093    NULL        24      true      b
+1187    _interval              4294967093    NULL        -1      false     b
+1231    _numeric               4294967093    NULL        -1      false     b
+1266    timetz                 4294967093    NULL        12      true      b
+1270    _timetz                4294967093    NULL        -1      false     b
+1560    bit                    4294967093    NULL        -1      false     b
+1561    _bit                   4294967093    NULL        -1      false     b
+1562    varbit                 4294967093    NULL        -1      false     b
+1563    _varbit                4294967093    NULL        -1      false     b
+1700    numeric                4294967093    NULL        -1      false     b
+1790    refcursor              4294967093    NULL        -1      false     b
+2201    _refcursor             4294967093    NULL        -1      false     b
+2202    regprocedure           4294967093    NULL        4       true      b
+2205    regclass               4294967093    NULL        4       true      b
+2206    regtype                4294967093    NULL        4       true      b
+2207    _regprocedure          4294967093    NULL        -1      false     b
+2210    _regclass              4294967093    NULL        -1      false     b
+2211    _regtype               4294967093    NULL        -1      false     b
+2249    record                 4294967093    NULL        0       true      p
+2276    any                    4294967093    NULL        -1      false     p
+2277    anyarray               4294967093    NULL        -1      false     p
+2278    void                   4294967093    NULL        0       true      p
+2279    trigger                4294967093    NULL        4       true      p
+2283    anyelement             4294967093    NULL        -1      false     p
+2287    _record                4294967093    NULL        -1      false     b
+2950    uuid                   4294967093    NULL        16      true      b
+2951    _uuid                  4294967093    NULL        -1      false     b
+3220    pg_lsn                 4294967093    NULL        8       true      b
+3221    _pg_lsn                4294967093    NULL        -1      false     b
+3614    tsvector               4294967093    NULL        -1      false     b
+3615    tsquery                4294967093    NULL        -1      false     b
+3643    _tsvector              4294967093    NULL        -1      false     b
+3645    _tsquery               4294967093    NULL        -1      false     b
+3802    jsonb                  4294967093    NULL        -1      false     b
+3807    _jsonb                 4294967093    NULL        -1      false     b
+4072    jsonpath               4294967093    NULL        -1      false     b
+4073    _jsonpath              4294967093    NULL        -1      false     b
+4089    regnamespace           4294967093    NULL        4       true      b
+4090    _regnamespace          4294967093    NULL        -1      false     b
+4096    regrole                4294967093    NULL        4       true      b
+4097    _regrole               4294967093    NULL        -1      false     b
+90000   geometry               4294967093    NULL        -1      false     b
+90001   _geometry              4294967093    NULL        -1      false     b
+90002   geography              4294967093    NULL        -1      false     b
+90003   _geography             4294967093    NULL        -1      false     b
+90004   box2d                  4294967093    NULL        32      true      b
+90005   _box2d                 4294967093    NULL        -1      false     b
+90006   vector                 4294967093    NULL        -1      false     b
+90007   _vector                4294967093    NULL        -1      false     b
+90008   citext                 4294967093    NULL        -1      false     b
+90009   _citext                4294967093    NULL        -1      false     b
+90010   ltree                  4294967093    NULL        -1      false     b
+90011   _ltree                 4294967093    NULL        -1      false     b
 100110  t1                     109           1546506610  -1      false     c
 100111  t1_m_seq               109           1546506610  -1      false     c
 100112  t1_n_seq               109           1546506610  -1      false     c
@@ -2555,7 +2552,7 @@ FROM pg_catalog.pg_type
 WHERE oid = 1000
 ----
 oid   typname  typnamespace  typowner  typlen  typbyval  typtype
-1000  _bool    4294967092    NULL      -1      false     b
+1000  _bool    4294967093    NULL      -1      false     b
 
 query OTOOIBT colnames
 SELECT oid, typname, typnamespace, typowner, typlen, typbyval, typtype
@@ -2613,7 +2610,7 @@ FROM pg_catalog.pg_type
 WHERE oid = $vtableSourceId
 ----
 oid         typname  typnamespace  typowner    typlen  typbyval  typtype
-4294967042  pg_proc  4294967092    3233629770  -1      false     c
+4294967043  pg_proc  4294967093    3233629770  -1      false     c
 
 ## pg_catalog.pg_proc
 
@@ -2624,14 +2621,14 @@ JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
 WHERE proname='substring'
 ----
 proname    pronamespace  nspname     proowner  prolang  procost  prorows  provariadic
-substring  4294967092    pg_catalog  NULL      12       NULL     NULL     0
-substring  4294967092    pg_catalog  NULL      12       NULL     NULL     0
-substring  4294967092    pg_catalog  NULL      12       NULL     NULL     0
-substring  4294967092    pg_catalog  NULL      12       NULL     NULL     0
-substring  4294967092    pg_catalog  NULL      12       NULL     NULL     0
-substring  4294967092    pg_catalog  NULL      12       NULL     NULL     0
-substring  4294967092    pg_catalog  NULL      12       NULL     NULL     0
-substring  4294967092    pg_catalog  NULL      12       NULL     NULL     0
+substring  4294967093    pg_catalog  NULL      12       NULL     NULL     0
+substring  4294967093    pg_catalog  NULL      12       NULL     NULL     0
+substring  4294967093    pg_catalog  NULL      12       NULL     NULL     0
+substring  4294967093    pg_catalog  NULL      12       NULL     NULL     0
+substring  4294967093    pg_catalog  NULL      12       NULL     NULL     0
+substring  4294967093    pg_catalog  NULL      12       NULL     NULL     0
+substring  4294967093    pg_catalog  NULL      12       NULL     NULL     0
+substring  4294967093    pg_catalog  NULL      12       NULL     NULL     0
 
 query TTBB colnames,rowsort
 SELECT proname, prokind, prosecdef, proleakproof
@@ -2803,9 +2800,9 @@ FROM pg_catalog.pg_roles
 ORDER BY rolname
 ----
 oid         rolname   rolsuper  rolinherit  rolcreaterole  rolcreatedb  rolcatupdate  rolcanlogin  rolreplication
-2310524507  admin     true      true        true           true         false         true         true
-3233629770  node      true      true        true           true         false         false        true
-1546506610  root      true      true        true           true         false         true         true
+2310524507  admin     true      true        true           true         false         true         false
+3233629770  node      true      true        true           true         false         false        false
+1546506610  root      true      true        true           true         false         true         false
 2264919399  testuser  false     true        false          false        false         true         false
 
 query OTITTBT colnames
@@ -2838,53 +2835,6 @@ testuser
 
 statement ok
 DELETE FROM system.users WHERE username = 'non_cached_user'
-
-## rolreplication from pg_catalog.pg_authid and pg_catalog.pg_roles
-statement ok
-CREATE ROLE test_no_replication;
-CREATE ROLE test_replication;
-GRANT SYSTEM REPLICATION to test_replication;
-CREATE ROLE test_src_replication;
-GRANT SYSTEM REPLICATIONSOURCE to test_src_replication;
-CREATE ROLE test_dst_replication;
-GRANT SYSTEM REPLICATIONDEST to test_dst_replication;
-
-query TB colnames
-SELECT rolname, rolreplication FROM pg_catalog.pg_roles
-ORDER BY rolname
-----
-rolname               rolreplication
-admin                 true
-node                  true
-root                  true
-test_dst_replication  true
-test_no_replication   false
-test_replication      true
-test_src_replication  true
-testuser              false
-
-query TB colnames
-SELECT rolname, rolreplication FROM pg_catalog.pg_authid
-ORDER BY rolname
-----
-rolname               rolreplication
-admin                 true
-node                  true
-root                  true
-test_dst_replication  true
-test_no_replication   false
-test_replication      true
-test_src_replication  true
-testuser              false
-
-statement ok
-DROP ROLE test_no_replication;
-REVOKE SYSTEM REPLICATION FROM test_replication;
-REVOKE SYSTEM REPLICATIONSOURCE FROM test_src_replication;
-REVOKE SYSTEM REPLICATIONDEST FROM test_dst_replication;
-DROP ROLE test_replication;
-DROP ROLE test_src_replication;
-DROP ROLE test_dst_replication;
 
 ## pg_catalog.pg_auth_members
 
@@ -2929,14 +2879,14 @@ OR (c.relname = 'pg_namespace' AND d.objoid IN (SELECT oid FROM pg_catalog.pg_na
 ORDER BY d.objoid, description
 ----
 relname       objoid      classoid    objsubid  description
-pg_class      138         4294967080  0         mycomment1
-pg_class      138         4294967080  1         mycomment2
-pg_namespace  139         4294967051  0         mycomment4
-pg_proc       738         4294967042  0         Calculates the absolute value of `val`.
-pg_proc       739         4294967042  0         Calculates the absolute value of `val`.
-pg_proc       740         4294967042  0         Calculates the absolute value of `val`.
-pg_class      385466581   4294967080  0         mycomment3
-pg_class      4294966964  4294967080  0         database users
+pg_class      138         4294967081  0         mycomment1
+pg_class      138         4294967081  1         mycomment2
+pg_namespace  139         4294967052  0         mycomment4
+pg_proc       738         4294967043  0         Calculates the absolute value of `val`.
+pg_proc       739         4294967043  0         Calculates the absolute value of `val`.
+pg_proc       740         4294967043  0         Calculates the absolute value of `val`.
+pg_class      385466581   4294967081  0         mycomment3
+pg_class      4294966965  4294967081  0         database users
 
 ## pg_catalog.pg_shdescription
 
@@ -2947,7 +2897,7 @@ query OOT colnames
 SELECT objoid, classoid, description FROM pg_catalog.pg_shdescription
 ----
 objoid  classoid    description
-100     4294967074  mydbcomment
+100     4294967075  mydbcomment
 
 ## pg_catalog.pg_event_trigger
 
@@ -3026,7 +2976,7 @@ name                                                             setting        
 allow_create_trigger_function_with_argv_references               off                 NULL      NULL        NULL        string
 allow_ordinal_column_references                                  off                 NULL      NULL        NULL        string
 allow_role_memberships_to_change_during_transaction              off                 NULL      NULL        NULL        string
-allow_unsafe_internals                                           off                 NULL      NULL        NULL        string
+allow_unsafe_internals                                           on                  NULL      NULL        NULL        string
 alter_primary_region_super_region_override                       off                 NULL      NULL        NULL        string
 always_distribute_full_scans                                     off                 NULL      NULL        NULL        string
 application_name                                                 ·                   NULL      NULL        NULL        string
@@ -3070,7 +3020,6 @@ disable_optimizer_rules                                          ·             
 disable_partially_distributed_plans                              off                 NULL      NULL        NULL        string
 disable_plan_gists                                               off                 NULL      NULL        NULL        string
 disable_vec_union_eager_cancellation                             off                 NULL      NULL        NULL        string
-disable_wait_for_jobs_notice                                     off                 NULL      NULL        NULL        string
 disallow_full_table_scans                                        off                 NULL      NULL        NULL        string
 distribute_group_by_row_count_threshold                          1000                NULL      NULL        NULL        string
 distribute_join_row_count_threshold                              1000                NULL      NULL        NULL        string
@@ -3091,6 +3040,7 @@ enable_insert_fast_path                                          on             
 enable_inspect_command                                           off                 NULL      NULL        NULL        string
 enable_multiple_modifications_of_table                           off                 NULL      NULL        NULL        string
 enable_multiregion_placement_policy                              off                 NULL      NULL        NULL        string
+enable_scrub_job                                                 off                 NULL      NULL        NULL        string
 enable_seqscan                                                   on                  NULL      NULL        NULL        string
 enable_shared_locking_for_serializable                           off                 NULL      NULL        NULL        string
 enable_super_regions                                             off                 NULL      NULL        NULL        string
@@ -3141,8 +3091,8 @@ on_update_rehome_row_enabled                                     on             
 opt_split_scan_limit                                             2048                NULL      NULL        NULL        string
 optimizer_always_use_histograms                                  on                  NULL      NULL        NULL        string
 optimizer_check_input_min_row_count                              1                   NULL      NULL        NULL        string
-optimizer_clamp_inequality_selectivity                           on                  NULL      NULL        NULL        string
-optimizer_clamp_low_histogram_selectivity                        on                  NULL      NULL        NULL        string
+optimizer_clamp_inequality_selectivity                           off                 NULL      NULL        NULL        string
+optimizer_clamp_low_histogram_selectivity                        off                 NULL      NULL        NULL        string
 optimizer_disable_cross_region_cascade_fast_path_for_rbr_tables  on                  NULL      NULL        NULL        string
 optimizer_enable_lock_elision                                    on                  NULL      NULL        NULL        string
 optimizer_hoist_uncorrelated_equality_subqueries                 on                  NULL      NULL        NULL        string
@@ -3190,7 +3140,7 @@ plan_cache_mode                                                  auto           
 plpgsql_use_strict_into                                          off                 NULL      NULL        NULL        string
 prefer_lookup_joins_for_fks                                      off                 NULL      NULL        NULL        string
 prepared_statements_cache_size                                   0 B                 NULL      NULL        NULL        string
-prevent_update_set_column_drop                                   on                  NULL      NULL        NULL        string
+prevent_update_set_column_drop                                   off                 NULL      NULL        NULL        string
 propagate_admission_header_to_leaf_transactions                  on                  NULL      NULL        NULL        string
 propagate_input_ordering                                         off                 NULL      NULL        NULL        string
 recursion_depth_limit                                            1000                NULL      NULL        NULL        string
@@ -3199,7 +3149,7 @@ reorder_joins_limit                                              8              
 require_explicit_primary_keys                                    off                 NULL      NULL        NULL        string
 results_buffer_size                                              524288              NULL      NULL        NULL        string
 role                                                             none                NULL      NULL        NULL        string
-row_security                                                     on                  NULL      NULL        NULL        string
+row_security                                                     off                 NULL      NULL        NULL        string
 search_path                                                      "$user", public     NULL      NULL        NULL        string
 serial_normalization                                             rowid               NULL      NULL        NULL        string
 server_encoding                                                  UTF8                NULL      NULL        NULL        string
@@ -3243,11 +3193,10 @@ unsafe_allow_triggers_modifying_cascades                         off            
 use_cputs_on_non_unique_indexes                                  off                 NULL      NULL        NULL        string
 use_declarative_schema_changer                                   on                  NULL      NULL        NULL        string
 use_improved_routine_dependency_tracking                         on                  NULL      NULL        NULL        string
-use_improved_routine_deps_triggers_and_computed_cols             on                  NULL      NULL        NULL        string
+use_improved_routine_deps_triggers_and_computed_cols             off                 NULL      NULL        NULL        string
 use_pre_25_2_variadic_builtins                                   off                 NULL      NULL        NULL        string
 use_proc_txn_control_extended_protocol_fix                       on                  NULL      NULL        NULL        string
 use_soft_limit_for_distribute_scan                               on                  NULL      NULL        NULL        string
-use_swap_mutations                                               off                 NULL      NULL        NULL        string
 variable_inequality_lookup_join_enabled                          on                  NULL      NULL        NULL        string
 vector_search_beam_size                                          32                  NULL      NULL        NULL        string
 vector_search_rerank_multiplier                                  50                  NULL      NULL        NULL        string
@@ -3277,7 +3226,7 @@ name                                                             setting        
 allow_create_trigger_function_with_argv_references               off                 NULL  user     NULL      off                 off
 allow_ordinal_column_references                                  off                 NULL  user     NULL      off                 off
 allow_role_memberships_to_change_during_transaction              off                 NULL  user     NULL      off                 off
-allow_unsafe_internals                                           off                 NULL  user     NULL      off                 off
+allow_unsafe_internals                                           on                  NULL  user     NULL      on                  on
 alter_primary_region_super_region_override                       off                 NULL  user     NULL      off                 off
 always_distribute_full_scans                                     off                 NULL  user     NULL      off                 off
 application_name                                                 ·                   NULL  user     NULL      ·                   ·
@@ -3321,7 +3270,6 @@ disable_optimizer_rules                                          ·             
 disable_partially_distributed_plans                              off                 NULL  user     NULL      off                 off
 disable_plan_gists                                               off                 NULL  user     NULL      off                 off
 disable_vec_union_eager_cancellation                             off                 NULL  user     NULL      off                 off
-disable_wait_for_jobs_notice                                     off                 NULL  user     NULL      off                 off
 disallow_full_table_scans                                        off                 NULL  user     NULL      off                 off
 distribute_group_by_row_count_threshold                          1000                NULL  user     NULL      1000                1000
 distribute_join_row_count_threshold                              1000                NULL  user     NULL      1000                1000
@@ -3342,6 +3290,7 @@ enable_insert_fast_path                                          on             
 enable_inspect_command                                           off                 NULL  user     NULL      off                 off
 enable_multiple_modifications_of_table                           off                 NULL  user     NULL      off                 off
 enable_multiregion_placement_policy                              off                 NULL  user     NULL      off                 off
+enable_scrub_job                                                 off                 NULL  user     NULL      off                 off
 enable_seqscan                                                   on                  NULL  user     NULL      on                  on
 enable_shared_locking_for_serializable                           off                 NULL  user     NULL      off                 off
 enable_super_regions                                             off                 NULL  user     NULL      off                 off
@@ -3392,8 +3341,8 @@ on_update_rehome_row_enabled                                     on             
 opt_split_scan_limit                                             2048                NULL  user     NULL      2048                2048
 optimizer_always_use_histograms                                  on                  NULL  user     NULL      on                  on
 optimizer_check_input_min_row_count                              1                   NULL  user     NULL      1                   1
-optimizer_clamp_inequality_selectivity                           on                  NULL  user     NULL      on                  on
-optimizer_clamp_low_histogram_selectivity                        on                  NULL  user     NULL      on                  on
+optimizer_clamp_inequality_selectivity                           off                 NULL  user     NULL      off                 off
+optimizer_clamp_low_histogram_selectivity                        off                 NULL  user     NULL      off                 off
 optimizer_disable_cross_region_cascade_fast_path_for_rbr_tables  on                  NULL  user     NULL      on                  on
 optimizer_enable_lock_elision                                    on                  NULL  user     NULL      on                  on
 optimizer_hoist_uncorrelated_equality_subqueries                 on                  NULL  user     NULL      on                  on
@@ -3441,7 +3390,7 @@ plan_cache_mode                                                  auto           
 plpgsql_use_strict_into                                          off                 NULL  user     NULL      off                 off
 prefer_lookup_joins_for_fks                                      off                 NULL  user     NULL      off                 off
 prepared_statements_cache_size                                   0 B                 B     user     NULL      0 B                 0 B
-prevent_update_set_column_drop                                   on                  NULL  user     NULL      on                  on
+prevent_update_set_column_drop                                   off                 NULL  user     NULL      off                 off
 propagate_admission_header_to_leaf_transactions                  on                  NULL  user     NULL      on                  on
 propagate_input_ordering                                         off                 NULL  user     NULL      off                 off
 recursion_depth_limit                                            1000                NULL  user     NULL      1000                1000
@@ -3450,7 +3399,7 @@ reorder_joins_limit                                              8              
 require_explicit_primary_keys                                    off                 NULL  user     NULL      off                 off
 results_buffer_size                                              524288              NULL  user     NULL      524288              524288
 role                                                             none                NULL  user     NULL      none                none
-row_security                                                     on                  NULL  user     NULL      on                  on
+row_security                                                     off                 NULL  user     NULL      off                 off
 search_path                                                      "$user", public     NULL  user     NULL      "$user", public     "$user", public
 serial_normalization                                             rowid               NULL  user     NULL      rowid               rowid
 server_encoding                                                  UTF8                NULL  user     NULL      UTF8                UTF8
@@ -3494,11 +3443,10 @@ unsafe_allow_triggers_modifying_cascades                         off            
 use_cputs_on_non_unique_indexes                                  off                 NULL  user     NULL      off                 off
 use_declarative_schema_changer                                   on                  NULL  user     NULL      on                  on
 use_improved_routine_dependency_tracking                         on                  NULL  user     NULL      on                  on
-use_improved_routine_deps_triggers_and_computed_cols             on                  NULL  user     NULL      on                  on
+use_improved_routine_deps_triggers_and_computed_cols             off                 NULL  user     NULL      off                 off
 use_pre_25_2_variadic_builtins                                   off                 NULL  user     NULL      off                 off
 use_proc_txn_control_extended_protocol_fix                       on                  NULL  user     NULL      on                  on
 use_soft_limit_for_distribute_scan                               on                  NULL  user     NULL      on                  on
-use_swap_mutations                                               off                 NULL  user     NULL      off                 off
 variable_inequality_lookup_join_enabled                          on                  NULL  user     NULL      on                  on
 vector_search_beam_size                                          32                  NULL  user     NULL      32                  32
 vector_search_rerank_multiplier                                  50                  NULL  user     NULL      50                  50
@@ -3559,7 +3507,6 @@ disable_optimizer_rules                                          NULL    NULL   
 disable_partially_distributed_plans                              NULL    NULL     NULL     NULL        NULL
 disable_plan_gists                                               NULL    NULL     NULL     NULL        NULL
 disable_vec_union_eager_cancellation                             NULL    NULL     NULL     NULL        NULL
-disable_wait_for_jobs_notice                                     NULL    NULL     NULL     NULL        NULL
 disallow_full_table_scans                                        NULL    NULL     NULL     NULL        NULL
 distribute_group_by_row_count_threshold                          NULL    NULL     NULL     NULL        NULL
 distribute_join_row_count_threshold                              NULL    NULL     NULL     NULL        NULL
@@ -3581,6 +3528,7 @@ enable_insert_fast_path                                          NULL    NULL   
 enable_inspect_command                                           NULL    NULL     NULL     NULL        NULL
 enable_multiple_modifications_of_table                           NULL    NULL     NULL     NULL        NULL
 enable_multiregion_placement_policy                              NULL    NULL     NULL     NULL        NULL
+enable_scrub_job                                                 NULL    NULL     NULL     NULL        NULL
 enable_seqscan                                                   NULL    NULL     NULL     NULL        NULL
 enable_shared_locking_for_serializable                           NULL    NULL     NULL     NULL        NULL
 enable_super_regions                                             NULL    NULL     NULL     NULL        NULL
@@ -3741,7 +3689,6 @@ use_improved_routine_deps_triggers_and_computed_cols             NULL    NULL   
 use_pre_25_2_variadic_builtins                                   NULL    NULL     NULL     NULL        NULL
 use_proc_txn_control_extended_protocol_fix                       NULL    NULL     NULL     NULL        NULL
 use_soft_limit_for_distribute_scan                               NULL    NULL     NULL     NULL        NULL
-use_swap_mutations                                               NULL    NULL     NULL     NULL        NULL
 variable_inequality_lookup_join_enabled                          NULL    NULL     NULL     NULL        NULL
 vector_search_beam_size                                          NULL    NULL     NULL     NULL        NULL
 vector_search_rerank_multiplier                                  NULL    NULL     NULL     NULL        NULL
@@ -3790,7 +3737,7 @@ query OTOOTBBOOOOOOOO colnames
 SELECT * FROM pg_catalog.pg_operator where oprname='+' and oprleft='float8'::regtype
 ----
 oid       oprname  oprnamespace  oprowner  oprkind  oprcanmerge  oprcanhash  oprleft  oprright  oprresult  oprcom  oprnegate  oprcode  oprrest  oprjoin
-74817020  +        4294967092    NULL      b        false        false       701      701       701        NULL    NULL       NULL     NULL     NULL
+74817020  +        4294967093    NULL      b        false        false       701      701       701        NULL    NULL       NULL     NULL     NULL
 
 # Verify proper functionality of system information functions.
 
@@ -4722,7 +4669,7 @@ subtest end
 query TTI
 SELECT database_name, descriptor_name, descriptor_id from test.crdb_internal.create_statements where descriptor_name = 'pg_views'
 ----
-test  pg_views  4294966963
+test  pg_views  4294966964
 
 # Verify INCLUDED columns appear in pg_index. See issue #59563
 statement ok

@@ -236,9 +236,6 @@ func (n *renameTableNode) startExec(params runParams) error {
 		p.Descriptors(),
 		&p.ExecCfg().Settings.SV,
 		p.SessionData(),
-		p.ExecCfg().Settings,
-		p.ExecCfg().JobsKnobs(),
-		p.ExecCfg().NodeInfo.LogicalClusterID(),
 	)
 
 	// If this table has row level ttl enabled, update the schedule_name of all

@@ -48,8 +48,6 @@ func (f *AbortableWriter) Write(p []byte) (err error) {
 	return nil
 }
 
-func (f *AbortableWriter) StartMetadataPortion() error { return nil }
-
 func (f *AbortableWriter) Finish() error {
 	defer f.cancel()
 	return f.writer.Close()

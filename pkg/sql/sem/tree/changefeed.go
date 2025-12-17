@@ -33,11 +33,6 @@ type ChangefeedFilterOption struct {
 	FilterType FilterType
 }
 
-// IsEmpty returns true if the filter corresponds to the default state.
-func (c ChangefeedFilterOption) IsEmpty() bool {
-	return c.FilterType == ExcludeFilter && len(c.Tables) == 0
-}
-
 func (l ChangefeedLevel) String() string {
 	return []string{"TABLE", "DATABASE"}[l]
 }
@@ -51,7 +46,7 @@ type CreateChangefeed struct {
 	TableTargets   ChangefeedTableTargets
 	DatabaseTarget ChangefeedDatabaseTarget
 	Level          ChangefeedLevel
-	FilterOption   ChangefeedFilterOption
+	FilterOption   *ChangefeedFilterOption
 	SinkURI        Expr
 	Options        KVOptions
 	Select         *SelectClause
@@ -78,7 +73,7 @@ func (node *CreateChangefeed) Format(ctx *FmtCtx) {
 		ctx.FormatNode(&node.TableTargets)
 	} else {
 		ctx.FormatNode(&node.DatabaseTarget)
-		if len(node.FilterOption.Tables) > 0 {
+		if node.FilterOption != nil {
 			ctx.WriteString(" ")
 			ctx.WriteString(node.FilterOption.FilterType.String())
 			ctx.WriteString(" TABLES ")

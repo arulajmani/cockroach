@@ -92,7 +92,7 @@ func setupTestInfra(t testing.TB) (_ *testInfra, cleanup func(context.Context)) 
 		nodeID:   s.NodeID(),
 		settings: tt.ClusterSettings(),
 		db:       tt.ExecutorConfig().(sql.ExecutorConfig).InternalDB,
-		lm:       tt.LeaseManager().(*lease.Manager),
+		lm:       s.LeaseManager().(*lease.Manager),
 		cf:       tt.ExecutorConfig().(sql.ExecutorConfig).CollectionFactory,
 		tsql:     sqlutils.MakeSQLRunner(db),
 	}, s.Stopper().Stop
@@ -278,6 +278,7 @@ func TestSchemaChanger(t *testing.T) {
 						TableID:                 fooTable.GetID(),
 						ColumnID:                2,
 						TypeT:                   scpb.TypeT{Type: types.Int},
+						IsNullable:              true,
 						ElementCreationMetadata: scdecomp.NewElementCreationMetadata(clusterversion.TestingClusterVersion),
 					},
 					metadata,
@@ -507,7 +508,8 @@ type noopStatsReferesher struct{}
 
 var _ scexec.StatsRefresher = noopStatsReferesher{}
 
-func (noopStatsReferesher) NotifyMutation(context.Context, catalog.TableDescriptor, int) {}
+func (noopStatsReferesher) NotifyMutation(table catalog.TableDescriptor, rowsAffected int) {
+}
 
 type noopMetadataUpdater struct{}
 
@@ -525,18 +527,6 @@ func (noopMetadataUpdater) DeleteSchedule(ctx context.Context, scheduleID jobspb
 
 // UpdateTTLScheduleLabel implements scexec.DescriptorMetadataUpdater.
 func (noopMetadataUpdater) UpdateTTLScheduleLabel(
-	ctx context.Context, tbl catalog.TableDescriptor,
-) error {
-	return nil
-}
-
-func (u noopMetadataUpdater) UpdateTTLScheduleCron(
-	ctx context.Context, scheduleID jobspb.ScheduleID, cronExpr string,
-) error {
-	return nil
-}
-
-func (u noopMetadataUpdater) CreateRowLevelTTLSchedule(
 	ctx context.Context, tbl catalog.TableDescriptor,
 ) error {
 	return nil

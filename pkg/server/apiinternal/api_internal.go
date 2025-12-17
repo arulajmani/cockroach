@@ -7,6 +7,7 @@ package apiinternal
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -14,16 +15,19 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/rpc"
 	"github.com/cockroachdb/cockroach/pkg/rpc/rpcbase"
-	"github.com/cockroachdb/cockroach/pkg/server/apiutil"
 	"github.com/cockroachdb/cockroach/pkg/server/authserver"
 	"github.com/cockroachdb/cockroach/pkg/server/serverpb"
+	"github.com/cockroachdb/cockroach/pkg/server/srverrors"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
-	"github.com/cockroachdb/cockroach/pkg/ts/tspb"
+	"github.com/cockroachdb/cockroach/pkg/util/httputil"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
 	"github.com/cockroachdb/errors"
+	"github.com/gogo/protobuf/jsonpb"
 	"github.com/gogo/protobuf/proto"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
+	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -37,12 +41,7 @@ const (
 	POST httpMethod = http.MethodPost
 )
 
-var decoder = func() *schema.Decoder {
-	d := schema.NewDecoder()
-	d.SetAliasTag("json")
-	d.IgnoreUnknownKeys(true)
-	return d
-}()
+var decoder = schema.NewDecoder()
 
 // route defines a REST endpoint with its handler and HTTP method.
 type route struct {
@@ -54,10 +53,8 @@ type route struct {
 // apiInternalServer provides REST endpoints that proxy to RPC services. It
 // serves as a bridge between HTTP REST clients and internal RPC services.
 type apiInternalServer struct {
-	mux        *mux.Router
-	status     serverpb.RPCStatusClient
-	admin      serverpb.RPCAdminClient
-	timeseries tspb.RPCTimeSeriesClient
+	mux    *mux.Router
+	status serverpb.RPCStatusClient
 }
 
 // NewAPIInternalServer creates a new REST API server that proxies to internal
@@ -71,33 +68,15 @@ func NewAPIInternalServer(
 		return nil, err
 	}
 
-	admin, err := serverpb.DialAdminClient(nd, ctx, localNodeID, cs)
-	if err != nil {
-		return nil, err
-	}
-
-	timeseries, err := rpcbase.DialRPCClient(
-		nd,
-		ctx,
-		localNodeID,
-		rpcbase.DefaultClass,
-		tspb.NewGRPCTimeSeriesClientAdapter,
-		tspb.NewDRPCTimeSeriesClientAdapter,
-		cs,
-	)
-	if err != nil {
-		return nil, err
-	}
 	r := &apiInternalServer{
-		status:     status,
-		admin:      admin,
-		timeseries: timeseries,
-		mux:        mux.NewRouter(),
+		status: status,
+		mux:    mux.NewRouter(),
 	}
 
 	r.registerStatusRoutes()
-	r.registerAdminRoutes()
-	r.registerTimeSeriesRoutes()
+
+	decoder.SetAliasTag("json")
+	decoder.IgnoreUnknownKeys(true)
 
 	return r, nil
 }
@@ -122,7 +101,7 @@ func createHandler[TReq, TResp protoutil.Message](
 		newReq := reflect.New(msgType.Elem()).Interface().(TReq)
 		if err := executeRPC(w, req, rpcMethod, newReq); err != nil {
 			ctx := req.Context()
-			apiutil.WriteHTTPError(ctx, w, req, err)
+			writeHTTPError(ctx, w, req, err)
 		}
 	}
 }
@@ -152,7 +131,7 @@ func executeRPC[TReq, TResp protoutil.Message](
 	}
 	// For POST requests, decode the request body (JSON or protobuf)
 	if req.Method == http.MethodPost {
-		if err := apiutil.DecodeRequest(req, rpcReq); err != nil {
+		if err := decodeRequest(req, rpcReq); err != nil {
 			return status.Errorf(codes.InvalidArgument, "failed to decode request body: %v", err)
 		}
 	}
@@ -161,7 +140,7 @@ func executeRPC[TReq, TResp protoutil.Message](
 	if err != nil {
 		return err
 	}
-	return apiutil.WriteResponse(ctx, w, req, http.StatusOK, resp)
+	return writeResponse(ctx, w, req, http.StatusOK, resp)
 }
 
 func decodePathVars[TReq protoutil.Message](rpcReq TReq, vars map[string]string) error {
@@ -170,4 +149,123 @@ func decodePathVars[TReq protoutil.Message](rpcReq TReq, vars map[string]string)
 		pathParams[k] = []string{v}
 	}
 	return decoder.Decode(rpcReq, pathParams)
+}
+
+// writeHTTPError converts an error to an HTTP error response. It handles gRPC
+// status codes and converts them to appropriate HTTP status codes. Internal
+// errors are masked to avoid leaking implementation details.
+func writeHTTPError(ctx context.Context, w http.ResponseWriter, req *http.Request, err error) {
+	s, ok := status.FromError(err)
+	if !ok {
+		s = status.New(codes.Unknown, err.Error())
+	}
+
+	message := s.Message()
+	if s.Code() == codes.Internal {
+		message = srverrors.ErrAPIInternalErrorString
+		log.Dev.Errorf(ctx, "failed internal API [%s] %s - %v", req.Method, req.URL.Path, err)
+	} else {
+		log.Ops.Errorf(ctx, "failed internal API [%s] %s - %v", req.Method, req.URL.Path, err)
+	}
+
+	data := &serverpb.ResponseError{
+		Error:   message,
+		Message: message,
+		Code:    int32(s.Code()),
+		// Details field is intentionally not populated as it's unused
+	}
+
+	// Convert gRPC status code to HTTP status code
+	// TODO(server): eliminate this dependency on grpc-gateway when
+	// migrating away from it
+	httpCode := runtime.HTTPStatusFromCode(s.Code())
+
+	if err := writeResponse(ctx, w, req, httpCode, data); err != nil {
+		log.Dev.Errorf(ctx, "failed to respond with error: %v", err)
+		const fallback = `{"code": 13, "message": "failed to marshal error message"}`
+		if _, err := io.WriteString(w, fallback); err != nil {
+			log.Dev.Errorf(ctx, "failed to write fallback error: %v", err)
+		}
+	}
+}
+
+// writeResponse writes a protobuf message as an HTTP response. It supports both
+// JSON and protobuf content types based on the request headers.
+func writeResponse(
+	ctx context.Context,
+	w http.ResponseWriter,
+	req *http.Request,
+	code int,
+	payload protoutil.Message,
+) error {
+	// Determine the response content type by checking Accept header first, then
+	// falling back to Content-Type header. Default to JSON if neither specifies
+	// a supported type.
+	resContentType := selectContentType(append(
+		req.Header[httputil.AcceptEncodingHeader],
+		req.Header[httputil.ContentTypeHeader]...))
+
+	var buf []byte
+	switch resContentType {
+	case httputil.ProtoContentType:
+		b, err := protoutil.Marshal(payload)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to marshal the protobuf response: %v", err)
+		}
+		buf = b
+	case httputil.JSONContentType, httputil.MIMEWildcard:
+		jsonpb := &protoutil.JSONPb{
+			EnumsAsInts:  true,
+			EmitDefaults: true,
+			Indent:       "  ",
+		}
+		b, err := jsonpb.Marshal(payload)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to marshal the JSON response: %v", err)
+		}
+		buf = b
+	}
+
+	w.Header().Set("Content-Type", resContentType)
+	w.WriteHeader(code)
+	if _, err := w.Write(buf); err != nil {
+		return status.Errorf(codes.Internal, "failed to write HTTP response: %v", err)
+	}
+	return nil
+}
+
+// decodeRequest decodes the request body into a protobuf message. It supports
+// both JSON and protobuf content types, defaulting to JSON.
+func decodeRequest(req *http.Request, target protoutil.Message) error {
+	if req.Body == nil {
+		return nil
+	}
+	reqContentType := selectContentType(req.Header[httputil.ContentTypeHeader])
+	switch reqContentType {
+	case httputil.JSONContentType, httputil.MIMEWildcard:
+		return jsonpb.Unmarshal(req.Body, target)
+	case httputil.ProtoContentType:
+		bytes, err := io.ReadAll(req.Body)
+		if err != nil {
+			return err
+		}
+		return protoutil.Unmarshal(bytes, target)
+	default:
+		return jsonpb.Unmarshal(req.Body, target)
+	}
+}
+
+// selectContentType chooses the appropriate content type from a list of
+// options. It prefers protobuf or JSON if available, defaulting to JSON if none
+// match.
+func selectContentType(contentTypes []string) string {
+	for _, c := range contentTypes {
+		switch c {
+		case httputil.ProtoContentType:
+			return httputil.ProtoContentType
+		case httputil.JSONContentType, httputil.MIMEWildcard:
+			return httputil.JSONContentType
+		}
+	}
+	return httputil.JSONContentType
 }

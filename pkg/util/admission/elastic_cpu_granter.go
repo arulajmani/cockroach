@@ -17,7 +17,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
-	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/tokenbucket"
 )
 
@@ -237,7 +236,7 @@ func (e *elasticCPUGranter) hasWaitingRequests() bool {
 
 // computeUtilizationMetric is part of the elasticCPULimiter interface.
 func (e *elasticCPUGranter) computeUtilizationMetric() {
-	if !e.metrics.everyInterval.ShouldProcess(crtime.NowMono()) {
+	if !e.metrics.everyInterval.ShouldProcess(timeutil.Now()) {
 		return // nothing to do
 	}
 
@@ -296,9 +295,8 @@ var ( // granter-side metrics (some of these have parallels on the requester sid
 	}
 
 	elasticCPUNanosExhaustedDuration = metric.Metadata{
-		Name: "admission.elastic_cpu.nanos_exhausted_duration",
-		Help: "Total duration (in micros) when elastic CPU tokens (tokens measured in nanoseconds) " +
-			"were exhausted, as observed by the token granter (not waiters)",
+		Name:        "admission.elastic_cpu.nanos_exhausted_duration",
+		Help:        "Total duration when elastic CPU nanoseconds were exhausted, in micros",
 		Measurement: "Microseconds",
 		Unit:        metric.Unit_COUNT,
 	}
@@ -341,11 +339,11 @@ type elasticCPUGranterMetrics struct {
 	MaxAvailableNanos      *metric.Counter
 	AvailableNanos         *metric.Gauge
 	UtilizationLimit       *metric.GaugeFloat64
-	NanosExhaustedDuration *metric.Counter
+	NanosExhaustedDuration *metric.Gauge
 	OverLimitDuration      metric.IHistogram
 
 	Utilization      *metric.GaugeFloat64 // updated every elasticCPUUtilizationMetricInterval, using fields below
-	everyInterval    util.EveryN[crtime.Mono]
+	everyInterval    util.EveryN
 	lastCumUsedNanos int64
 }
 
@@ -358,7 +356,7 @@ func makeElasticCPUGranterMetrics() *elasticCPUGranterMetrics {
 		PreWorkNanos:           metric.NewCounter(elasticCPUPreWorkNanos),
 		MaxAvailableNanos:      metric.NewCounter(elasticCPUMaxAvailableNanos),
 		AvailableNanos:         metric.NewGauge(elasticCPUAvailableNanos),
-		NanosExhaustedDuration: metric.NewCounter(elasticCPUNanosExhaustedDuration),
+		NanosExhaustedDuration: metric.NewGauge(elasticCPUNanosExhaustedDuration),
 		OverLimitDuration: metric.NewHistogram(metric.HistogramOptions{
 			Mode:         metric.HistogramModePrometheus,
 			Metadata:     elasticCPUOverLimitDurations,
@@ -367,7 +365,7 @@ func makeElasticCPUGranterMetrics() *elasticCPUGranterMetrics {
 		}),
 		Utilization:      metric.NewGaugeFloat64(elasticCPUGranterUtilization),
 		UtilizationLimit: metric.NewGaugeFloat64(elasticCPUGranterUtilizationLimit),
-		everyInterval:    util.EveryMono(elasticCPUUtilizationMetricInterval),
+		everyInterval:    util.Every(elasticCPUUtilizationMetricInterval),
 	}
 
 	metrics.MaxAvailableNanos.Inc(int64(runtime.GOMAXPROCS(0)) * time.Second.Nanoseconds())

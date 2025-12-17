@@ -11,7 +11,6 @@ import (
 	gojson "encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/build"
@@ -24,7 +23,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catalogkeys"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catpb"
-	"github.com/cockroachdb/cockroach/pkg/sql/catalog/colinfo"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/funcdesc"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/resolver"
@@ -37,7 +35,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgnotice"
 	"github.com/cockroachdb/cockroach/pkg/sql/privilege"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/catconstants"
-	"github.com/cockroachdb/cockroach/pkg/sql/sem/catid"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/eval"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/idxtype"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/semenumpb"
@@ -770,6 +767,13 @@ func (n *alterTableNode) startExec(params runParams) error {
 				return err
 			}
 
+			paramIsDelete := t.StorageParams.GetVal("ttl_delete_rate_limit") != nil
+			paramIsSelect := t.StorageParams.GetVal("ttl_select_rate_limit") != nil
+
+			if paramIsDelete || paramIsSelect {
+				printTTLRateLimitNotice(params.ctx, params.p)
+			}
+
 		case *tree.AlterTableResetStorageParams:
 			setter := tablestorageparam.NewSetter(n.tableDesc, false /* isNewObject */)
 			if err := storageparam.Reset(
@@ -1263,7 +1267,7 @@ func applyColumnMutation(
 			return err
 		}
 
-		// Alter referenced sequence for identity with specified option.
+		// Alter referenced sequence for identity with sepcified option.
 		// Does not override existing values if not specified.
 		if err := alterSequenceImpl(params, seqDesc, t.SeqOptions, t); err != nil {
 			return err
@@ -1284,7 +1288,7 @@ func applyColumnMutation(
 		if opts.Virtual {
 			optsNode = append(optsNode, tree.SequenceOption{Name: tree.SeqOptVirtual})
 		}
-		s := strings.TrimSpace(tree.Serialize(&optsNode))
+		s := tree.Serialize(&optsNode)
 		col.ColumnDesc().GeneratedAsIdentitySequenceOption = &s
 
 	case *tree.AlterTableDropIdentity:
@@ -2156,7 +2160,7 @@ func handleTTLStorageParamChange(
 
 		// Update cron schedule if required.
 		if before.DeletionCron != after.DeletionCron {
-			env := jobs.JobSchedulerEnv(params.ExecCfg().JobsKnobs())
+			env := JobSchedulerEnv(params.ExecCfg().JobsKnobs())
 			schedules := jobs.ScheduledJobTxn(params.p.InternalSQLTxn())
 			s, err := schedules.Load(
 				params.ctx,
@@ -2299,20 +2303,9 @@ func handleTTLStorageParamChange(
 	}
 	// Validate the type and volatility of ttl_expiration_expression.
 	if after != nil {
-		getAllNonDropColumnsFn := func() colinfo.ResultColumns {
-			return colinfo.ResultColumnsFromColumns(tableDesc.GetID(), tableDesc.NonDropColumns())
-		}
-		columnLookupByNameFn := func(columnName tree.Name) (exists, accessible, computed bool, id catid.ColumnID, typ *types.T) {
-			col, err := catalog.MustFindColumnByTreeName(tableDesc, columnName)
-			if err != nil || col.Dropped() {
-				return false, false, false, 0, nil
-			}
-			return true, !col.IsInaccessible(), col.IsComputed(), col.GetID(), col.GetType()
-		}
-		if _, err := schemaexpr.ValidateTTLExpirationExpression(
-			params.ctx, params.p.SemaCtx(), tn, after,
+		if err := schemaexpr.ValidateTTLExpirationExpression(
+			params.ctx, tableDesc, params.p.SemaCtx(), tn, after,
 			params.ExecCfg().Settings.Version.ActiveVersion(params.ctx),
-			getAllNonDropColumnsFn, columnLookupByNameFn,
 		); err != nil {
 			return false, err
 		}
@@ -2525,8 +2518,10 @@ func (p *planner) checkSchemaChangeIsAllowed(
 		return nil
 	}
 	// Check if this schema change is on the allowed list, which will only
-	// be simple non-back filling schema changes.
-	preventedBySchemaLocked := false
+	// be simple non-back filling schema changes. All commands except set/reset
+	// schema_locked are unsupported before 25.2
+	preventedBySchemaLocked := !p.ExecCfg().Settings.Version.IsActive(ctx, clusterversion.V25_3) &&
+		!tree.IsSetOrResetSchemaLocked(n)
 	// These schema changes are allowed because the events generated will always
 	// be ignored by the schema_locked. The tableEventFilter (in CDC schemafeed)
 	// only cares about a limited number of events:

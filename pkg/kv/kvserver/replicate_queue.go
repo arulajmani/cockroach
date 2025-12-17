@@ -294,7 +294,7 @@ var (
 		Help:        "Number of failed decommissioning replica replacements processed by the replicate queue",
 		Measurement: "Replicas",
 		Unit:        metric.Unit_COUNT,
-		Visibility:  metric.Metadata_ESSENTIAL,
+		Essential:   true,
 		Category:    metric.Metadata_REPLICATION,
 		HowToUse:    `Refer to Decommission the node.`,
 	}
@@ -1051,6 +1051,7 @@ func (rq *replicateQueue) shedLease(
 		desc.Replicas().VoterDescriptors(),
 		repl,
 		rangeUsageInfo,
+		false, /* forceDecisionWithoutStats */
 		opts,
 	)
 	if targetDesc == (roachpb.ReplicaDescriptor{}) {
@@ -1128,8 +1129,6 @@ func (rq *replicateQueue) TransferLease(
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
 	changeID := rq.as.NonMMAPreTransferLease(
-		ctx,
-		rq.store.StoreID(),
 		rlm.Desc(),
 		rangeUsageInfo,
 		source,
@@ -1174,8 +1173,6 @@ func (rq *replicateQueue) changeReplicas(
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
 	changeID := rq.as.NonMMAPreChangeReplicas(
-		ctx,
-		rq.store.StoreID(),
 		desc,
 		rangeUsageInfo,
 		chgs,

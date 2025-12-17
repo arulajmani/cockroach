@@ -79,13 +79,6 @@ type ImmediateMutationStateUpdater interface {
 	// InitSequence initializes a sequence.
 	InitSequence(id descpb.ID, startVal int64)
 
-	// SetSequence sets a sequence to the provided value.
-	SetSequence(id descpb.ID, val int64)
-
-	// MaybeUpdateSequenceValue updates the value of the sequence when changes to
-	// the sequence options demand it. It is best effort.
-	MaybeUpdateSequenceValue(id descpb.ID, opts scop.MaybeUpdateSequenceValue)
-
 	// UpdateZoneConfig upserts a zone config.
 	UpdateZoneConfig(id descpb.ID, zc *zonepb.ZoneConfig)
 
@@ -133,7 +126,6 @@ type DeferredMutationStateUpdater interface {
 		auth scpb.Authorization,
 		descriptorIDs catalog.DescriptorIDSet,
 		runningStatus redact.RedactableString,
-		distributedMergeMode jobspb.IndexBackfillDistributedMergeMode,
 	) error
 
 	// UpdateSchemaChangerJob will update the progress and payload of the
@@ -159,10 +151,4 @@ type DeferredMutationStateUpdater interface {
 
 	// UpdateTTLScheduleMetadata updates the TTL schedule metadata for a table.
 	UpdateTTLScheduleMetadata(ctx context.Context, tableID descpb.ID, newName string) error
-
-	// UpdateTTLScheduleCron updates the cron expression for a TTL schedule.
-	UpdateTTLScheduleCron(ctx context.Context, scheduleID jobspb.ScheduleID, cronExpr string) error
-
-	// CreateRowLevelTTLSchedule creates a new row-level TTL schedule for a table.
-	CreateRowLevelTTLSchedule(ctx context.Context, tableID descpb.ID) error
 }

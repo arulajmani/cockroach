@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -34,8 +35,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlstats/sslocal"
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlstats/ssmemstorage"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
+	"github.com/cockroachdb/cockroach/pkg/testutils/pgurlutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
-	"github.com/cockroachdb/cockroach/pkg/testutils/skip"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
 	"github.com/cockroachdb/cockroach/pkg/util"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
@@ -472,6 +473,7 @@ func TestExplicitTxnFingerprintAccounting(t *testing.T) {
 		ingester,
 		sessionphase.NewTimes(),
 		sqlStats.GetCounters(),
+		nil, /* knobs */
 	)
 
 	recordStats := func(testCase *tc) {
@@ -595,6 +597,7 @@ func TestAssociatingStmtStatsWithTxnFingerprint(t *testing.T) {
 			ingester,
 			sessionphase.NewTimes(),
 			sqlStats.GetCounters(),
+			nil, /* knobs */
 		)
 
 		ingester.Start(ctx, stopper)
@@ -753,13 +756,12 @@ func TestTransactionServiceLatencyOnExtendedProtocol(t *testing.T) {
 			}
 		},
 	}
-	srv := serverutils.StartServerOnly(t, params)
-	defer srv.Stopper().Stop(ctx)
-	s := srv.ApplicationLayer()
+	s := serverutils.StartServerOnly(t, params)
+	defer s.Stopper().Stop(ctx)
+	ts := s.ApplicationLayer()
 
-	pgURL, cleanupGoDB := s.PGUrl(
-		t, serverutils.CertsDirPrefix("StartServer"), serverutils.User(username.RootUser),
-	)
+	pgURL, cleanupGoDB := pgurlutils.PGUrl(
+		t, ts.AdvSQLAddr(), "StartServer", url.User(username.RootUser))
 	defer cleanupGoDB()
 	c, err := pgx.Connect(ctx, pgURL.String())
 	require.NoError(t, err, "error connecting with pg url")
@@ -1641,7 +1643,6 @@ FROM crdb_internal.statement_statistics WHERE app_name = $1`, appName)
 func TestSQLStatsDiscardStatsOnFingerprintLimit(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
-	skip.UnderRace(t)
 
 	ctx := context.Background()
 	s := serverutils.StartServerOnly(t, base.TestServerArgs{})

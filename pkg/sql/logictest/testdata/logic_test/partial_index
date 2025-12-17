@@ -2504,6 +2504,9 @@ subtest end
 # routines that build partial index predicate expressions.
 subtest regression_158154
 
+statement ok
+SET use_improved_routine_deps_triggers_and_computed_cols = true;
+
 # Simple case with INSERT and UPDATE into a table with a partial index.
 statement ok
 CREATE TABLE t158154 (a INT, b INT, INDEX b_idx (b) WHERE (b > 0));
@@ -2589,5 +2592,8 @@ CALL p158154();
 statement ok
 DROP PROCEDURE p158154;
 DROP TABLE t158154;
+
+statement ok
+RESET use_improved_routine_deps_triggers_and_computed_cols;
 
 subtest end

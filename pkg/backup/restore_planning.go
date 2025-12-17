@@ -1686,15 +1686,6 @@ func doRestorePlan(
 
 	var fullyResolvedSubdir string
 
-	if restoreStmt.Options.OnlineImpl() {
-		// validate that from uris are allowed in online restore
-		for _, path := range from {
-			if err := uriCompatibleWithOnlineRestore(ctx, p.InternalSQLTxn(), path); err != nil {
-				return err
-			}
-		}
-	}
-
 	defaultCollectionURI, _, err := backupdest.GetURIsByLocalityKV(from, "")
 	if err != nil {
 		return err
@@ -1809,6 +1800,13 @@ func doRestorePlan(
 	)
 	if err != nil {
 		return err
+	}
+	if restoreStmt.Options.OnlineImpl() {
+		for _, uri := range defaultURIs {
+			if err := cloud.SchemeSupportsEarlyBoot(uri); err != nil {
+				return errors.Wrap(err, "backup URI not supported for online restore")
+			}
+		}
 	}
 
 	defer func() {

@@ -9,22 +9,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/apply"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvadmission"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvstorage"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/rditer"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage"
-	"github.com/cockroachdb/cockroach/pkg/storage/fs"
-	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/log/logcrash"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
-	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/redact"
 )
@@ -314,24 +309,16 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 	}
 
 	if res.Split != nil {
-		// Splits require a new HardState to be written for the new RHS replica,
-		// atomically with the main batch. This cannot be constructed at evaluation
-		// time because it differs on each replica (votes may have already been cast
-		// on the uninitialized replica). Write this new HardState to the batch too.
+		// Splits require a new HardState to be written to the new RHS
+		// range (and this needs to be atomic with the main batch). This
+		// cannot be constructed at evaluation time because it differs
+		// on each replica (votes may have already been cast on the
+		// uninitialized replica). Write this new hardstate to the batch too.
 		// See https://github.com/cockroachdb/cockroach/issues/20629.
 		//
-		// Alternatively if we discover that the RHS has already been removed from
-		// this store, clean up its data.
-		//
-		// NB: another reason why we shouldn't write HardState at evaluation time is
-		// that it belongs to the log engine, whereas the evaluated batch must
-		// contain only state machine updates.
-		in, err := validateAndPrepareSplit(ctx, b.r, res.Split.SplitTrigger, cmd.Cmd.ClosedTimestamp)
-		if err != nil {
-			log.KvExec.Fatalf(ctx, "unable to validate split: %s", err)
-		}
-
-		splitPreApply(ctx, kvstorage.StateRW(b.batch), kvstorage.TODORaft(b.batch), in)
+		// Alternatively if we discover that the RHS has already been removed
+		// from this store, clean up its data.
+		splitPreApply(ctx, b.r, b.batch, res.Split.SplitTrigger, cmd.Cmd.ClosedTimestamp)
 
 		// The rangefeed processor will no longer be provided logical ops for
 		// its entire range, so it needs to be shut down and all registrations
@@ -343,7 +330,9 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 		if res.Split.SplitTrigger.ManualSplit {
 			reason = kvpb.RangeFeedRetryError_REASON_MANUAL_RANGE_SPLIT
 		}
-		b.r.disconnectRangefeedWithReason(reason)
+		b.r.disconnectRangefeedWithReason(
+			reason,
+		)
 	}
 
 	if merge := res.Merge; merge != nil {
@@ -370,10 +359,16 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 		rhsRepl.mu.Unlock()
 		rhsRepl.readOnlyCmdMu.Unlock()
 
-		if err := kvstorage.SubsumeReplica(
-			ctx, kvstorage.TODOReadWriter(b.batch), rhsRepl.destroyInfoRaftMuLocked(),
-		); err != nil {
-			return errors.Wrapf(err, "unable to subsume replica before merge")
+		// Use math.MaxInt32 (mergedTombstoneReplicaID) as the nextReplicaID as an
+		// extra safeguard against creating new replicas of the RHS. This isn't
+		// required for correctness, since the merge protocol should guarantee that
+		// no new replicas of the RHS can ever be created, but it doesn't hurt to
+		// be careful.
+		if err := kvstorage.DestroyReplica(ctx, rhsRepl.ID(), b.batch, b.batch, mergedTombstoneReplicaID, kvstorage.ClearRangeDataOptions{
+			ClearReplicatedByRangeID:   true,
+			ClearUnreplicatedByRangeID: true,
+		}); err != nil {
+			return errors.Wrapf(err, "unable to destroy replica before merge")
 		}
 
 		// Shut down rangefeed processors on either side of the merge.
@@ -451,6 +446,7 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 		b.r.shMu.destroyStatus.Set(
 			kvpb.NewRangeNotFoundError(b.r.RangeID, b.r.store.StoreID()),
 			destroyReasonRemoved)
+		span := b.r.descRLocked().RSpan()
 		b.r.mu.Unlock()
 		b.r.readOnlyCmdMu.Unlock()
 		b.changeRemovesReplica = true
@@ -459,10 +455,11 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 		// We've set the replica's in-mem status to reflect the pending destruction
 		// above, and DestroyReplica will also add a range tombstone to the
 		// batch, so that when we commit it, the removal is finalized.
-		if err := kvstorage.DestroyReplica(
-			ctx, kvstorage.TODOReadWriter(b.batch),
-			b.r.destroyInfoRaftMuLocked(), change.NextReplicaID(),
-		); err != nil {
+		if err := kvstorage.DestroyReplica(ctx, b.r.ID(), b.batch, b.batch, change.NextReplicaID(), kvstorage.ClearRangeDataOptions{
+			ClearReplicatedBySpan:      span,
+			ClearReplicatedByRangeID:   true,
+			ClearUnreplicatedByRangeID: true,
+		}); err != nil {
 			return errors.Wrapf(err, "unable to destroy replica before removal")
 		}
 	}
@@ -695,7 +692,7 @@ func (b *replicaAppBatch) ApplyToStateMachine(ctx context.Context) error {
 	// Record the number of keys written to the replica.
 	b.r.loadStats.RecordWriteKeys(float64(b.ab.numMutations))
 
-	now := crtime.NowMono()
+	now := timeutil.Now()
 	if needsSplitBySize && r.splitQueueThrottle.ShouldProcess(now) {
 		r.store.splitQueue.MaybeAddAsync(ctx, r, r.store.Clock().NowAsClockTimestamp())
 	}
@@ -708,24 +705,20 @@ func (b *replicaAppBatch) ApplyToStateMachine(ctx context.Context) error {
 
 	b.recordStatsOnCommit()
 
-	// If the testing knob is enabled, verify that the tracked SysBytes matches
-	// the actual SysBytes computed from the data. This is useful for debugging
-	// MVCCStats discrepancies (e.g. issue #159331).
-	if knobs := b.r.store.TestingKnobs(); knobs != nil && knobs.SysBytesVerificationOnRaftApply != nil {
-		knobs.SysBytesVerificationOnRaftApply(b.verifySysBytes(ctx))
-	}
-
 	return nil
 }
 
 // addAppliedStateKeyToBatch adds the applied state key to the application
-// batch's Pebble batch. This records the highest raft and lease index that have
-// been applied as of this batch. It also records the Range's MVCC stats.
+// batch's RocksDB batch. This records the highest raft and lease index that
+// have been applied as of this batch. It also records the Range's mvcc stats.
 func (b *replicaAppBatch) addAppliedStateKeyToBatch(ctx context.Context) error {
-	// Set the range applied state, which includes the last applied raft and lease
-	// index along with the MVCC stats, all in one key.
-	b.asAlloc = b.state.ToRangeAppliedState()
-	return b.r.raftMu.stateLoader.SetRangeAppliedState(ctx, b.batch, &b.asAlloc)
+	// Set the range applied state, which includes the last applied raft and
+	// lease index along with the mvcc stats, all in one key.
+	loader := &b.r.raftMu.stateLoader
+	return loader.SetRangeAppliedState(
+		ctx, b.batch, b.state.RaftAppliedIndex, b.state.LeaseAppliedIndex, b.state.RaftAppliedIndexTerm,
+		b.state.Stats, b.state.RaftClosedTimestamp, &b.asAlloc,
+	)
 }
 
 func (b *replicaAppBatch) recordStatsOnCommit() {
@@ -743,71 +736,6 @@ func (b *replicaAppBatch) recordStatsOnCommit() {
 
 	elapsed := timeutil.Since(b.start)
 	b.r.store.metrics.RaftCommandCommitLatency.RecordValue(elapsed.Nanoseconds())
-}
-
-// verifySysBytes recomputes SysBytes and compares it to the tracked stats.
-// Returns an error describing the mismatch if one is detected, nil otherwise.
-//
-// verifySysBytes is only intended for use in tests.
-func (b *replicaAppBatch) verifySysBytes(ctx context.Context) error {
-	// Skip verification if the replica is being removed (its data has been
-	// deleted) or if stats contain estimates (we can't rely on them being exact).
-	if b.changeRemovesReplica || b.state.Stats.ContainsEstimates != 0 {
-		return nil
-	}
-
-	// NB: Read the current descriptor from the engine. This is important because
-	// b.state.Desc's bounds (specifically the EndKey) may be stale after a split
-	// or a merge -- that's because the state is read when the batch is
-	// initialized, but the descriptor isn't updated until side effects are
-	// applied via handleNonTrivialReplicatedEvalResult.
-	var desc roachpb.RangeDescriptor
-	descKey := keys.RangeDescriptorKey(b.state.Desc.StartKey)
-	ok, err := storage.MVCCGetProto(ctx, b.r.store.TODOEngine(), descKey,
-		hlc.MaxTimestamp, &desc, storage.MVCCGetOptions{
-			Inconsistent: true, ReadCategory: fs.UnknownReadCategory})
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.Errorf("range descriptor not found at key %s", descKey)
-	}
-
-	// Compute stats for only the key spans that contribute to SysBytes:
-	// 1. Replicated range-ID local keys.
-	// 2. Range-local keys.
-	sysKeySpans := rditer.Select(desc.RangeID, rditer.SelectOpts{
-		ReplicatedByRangeID: true,
-		Ranged: rditer.SelectRangedOptions{
-			RSpan:      desc.RSpan(),
-			SystemKeys: true,
-		},
-	})
-	var computedSysBytes, computedSysCount int64
-	for _, span := range sysKeySpans {
-		ms, err := storage.ComputeStats(
-			ctx, b.r.store.TODOEngine(), fs.UnknownReadCategory,
-			span.Key, span.EndKey, 0 /* nowNanos */)
-		if err != nil {
-			return err
-		}
-		computedSysBytes += ms.SysBytes
-		computedSysCount += ms.SysCount
-	}
-
-	trackedSysBytes := b.state.Stats.SysBytes
-	trackedSysCount := b.state.Stats.SysCount
-	if trackedSysBytes != computedSysBytes || trackedSysCount != computedSysCount {
-		err := errors.AssertionFailedf("SysBytes/SysCount mismatch: r%d s%d at raft index %d: "+
-			"trackedBytes=%d computedBytes=%d deltaBytes=%d "+
-			"trackedCount=%d computedCount=%d deltaCount=%d desc=%s",
-			desc.RangeID, b.r.store.StoreID(), b.state.RaftAppliedIndex,
-			trackedSysBytes, computedSysBytes, trackedSysBytes-computedSysBytes,
-			trackedSysCount, computedSysCount, trackedSysCount-computedSysCount, &desc)
-		log.KvExec.Warningf(ctx, "%v", err)
-		return err
-	}
-	return nil
 }
 
 // Close implements the apply.Batch interface.

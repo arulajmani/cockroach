@@ -75,23 +75,6 @@ const (
 	EnrichedPropertySchema EnrichedProperty = `schema`
 )
 
-// ChangefeedRangeDistributionStrategy configures how the changefeed balances
-// ranges between nodes.
-type ChangefeedRangeDistributionStrategy string
-
-const (
-	// ChangefeedRangeDistributionStrategyDefault employs no load balancing on
-	// the changefeed side. We defer to distsql to select nodes and distribute work.
-	ChangefeedRangeDistributionStrategyDefault ChangefeedRangeDistributionStrategy = `default`
-	// ChangefeedRangeDistributionStrategyBalancedSimple defers to distsql for
-	// selecting the set of nodes to distribute work to. However, changefeeds
-	// will try to distribute work evenly across this set of nodes.
-	ChangefeedRangeDistributionStrategyBalancedSimple ChangefeedRangeDistributionStrategy = `balanced_simple`
-	// ChangefeedRangeDistributionStrategyNotSpecified is used to indicate that
-	// the changefeed range distribution strategy is not specified.
-	ChangefeedRangeDistributionStrategyNotSpecified ChangefeedRangeDistributionStrategy = ``
-)
-
 // Constants for the initial scan types
 const (
 	InitialScan InitialScanType = iota
@@ -109,7 +92,6 @@ const (
 	OptEnvelope                           = `envelope`
 	OptFormat                             = `format`
 	OptFullTableName                      = `full_table_name`
-	OptHibernationPollingFrequency        = `hibernation_polling_frequency`
 	OptKeyInValue                         = `key_in_value`
 	OptTopicInValue                       = `topic_in_value`
 	OptResolvedTimestamps                 = `resolved`
@@ -179,8 +161,6 @@ const (
 	OptInitialScanOnly = `initial_scan_only`
 
 	OptEnrichedProperties = `enriched_properties`
-
-	OptRangeDistributionStrategy = `range_distribution_strategy`
 
 	OptEnvelopeKeyOnly       EnvelopeType = `key_only`
 	OptEnvelopeRow           EnvelopeType = `row`
@@ -401,7 +381,6 @@ var ChangefeedOptionExpectValues = map[string]OptionPermittedValues{
 	OptEnvelope:                           enum("row", "key_only", "wrapped", "deprecated_row", "bare", "enriched"),
 	OptFormat:                             enum("json", "avro", "csv", "experimental_avro", "parquet", "protobuf"),
 	OptFullTableName:                      flagOption,
-	OptHibernationPollingFrequency:        durationOption,
 	OptKeyInValue:                         flagOption,
 	OptTopicInValue:                       flagOption,
 	OptResolvedTimestamps:                 durationOption.thatCanBeZero().orEmptyMeans("0"),
@@ -433,7 +412,6 @@ var ChangefeedOptionExpectValues = map[string]OptionPermittedValues{
 	OptIgnoreDisableChangefeedReplication: flagOption,
 	OptEncodeJSONValueNullAsObject:        flagOption,
 	OptEnrichedProperties:                 csv(string(EnrichedPropertySource), string(EnrichedPropertySchema)),
-	OptRangeDistributionStrategy:          enum(string(ChangefeedRangeDistributionStrategyDefault), string(ChangefeedRangeDistributionStrategyBalancedSimple)),
 	OptHeadersJSONColumnName:              stringOption,
 	OptExtraHeaders:                       jsonOption,
 }
@@ -450,7 +428,6 @@ var CommonOptions = makeStringSet(OptCursor, OptEndTime, OptEnvelope,
 	OptMinCheckpointFrequency, OptMetricsScope, OptVirtualColumns, Topics, OptExpirePTSAfter,
 	OptExecutionLocality, OptLaggingRangesThreshold, OptLaggingRangesPollingInterval,
 	OptIgnoreDisableChangefeedReplication, OptEncodeJSONValueNullAsObject, OptEnrichedProperties,
-	OptRangeDistributionStrategy, OptHibernationPollingFrequency,
 )
 
 // SQLValidOptions is options exclusive to SQL sink
@@ -826,17 +803,6 @@ func (s StatementOptions) IsInitialScanSpecified() bool {
 	}
 
 	return true
-}
-
-func (s StatementOptions) GetChangefeedRangeDistributionStrategy() (
-	ChangefeedRangeDistributionStrategy,
-	error,
-) {
-	v, err := s.getEnumValue(OptRangeDistributionStrategy)
-	if err != nil {
-		return "", err
-	}
-	return ChangefeedRangeDistributionStrategy(v), nil
 }
 
 // ShouldUseFullStatementTimeName returns true if references to the table should be in db.schema.table
@@ -1218,20 +1184,6 @@ func (s StatementOptions) KeyOnly() bool {
 // recorded. Returns nil if not set, and an error if invalid.
 func (s StatementOptions) GetMinCheckpointFrequency() (*time.Duration, error) {
 	return s.getDurationValue(OptMinCheckpointFrequency)
-}
-
-// GetHibernationPollingFrequency returns the frequency with which polling
-// should be performed while the changefeed is waiting for the tableset to be
-// non-empty.
-func (s StatementOptions) GetHibernationPollingFrequency() (*time.Duration, error) {
-	freq, err := s.getDurationValue(OptHibernationPollingFrequency)
-	if err != nil {
-		return nil, err
-	}
-	if freq != nil {
-		return freq, nil
-	}
-	return &DefaultHibernationPollingFrequency, nil
 }
 
 func (s StatementOptions) GetConfluentSchemaRegistry() string {

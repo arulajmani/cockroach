@@ -94,8 +94,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/spanconfig/spanconfigreporter"
 	"github.com/cockroachdb/cockroach/pkg/spanconfig/spanconfigstore"
 	"github.com/cockroachdb/cockroach/pkg/sql"
-	_ "github.com/cockroachdb/cockroach/pkg/sql/bulkingest" // register bulk ingest implementation
-	_ "github.com/cockroachdb/cockroach/pkg/sql/bulkmerge"  // register bulk merge implementation
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catalogkeys"
 	_ "github.com/cockroachdb/cockroach/pkg/sql/catalog/schematelemetry" // register schedules declared outside of pkg/sql
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/systemschema"
@@ -103,7 +101,6 @@ import (
 	_ "github.com/cockroachdb/cockroach/pkg/sql/gcjob"    // register jobs declared outside of pkg/sql
 	_ "github.com/cockroachdb/cockroach/pkg/sql/importer" // register jobs/planHooks declared outside of pkg/sql
 	_ "github.com/cockroachdb/cockroach/pkg/sql/inspect"  // register job and planHook declared outside of pkg/sql
-	_ "github.com/cockroachdb/cockroach/pkg/sql/isession" // register isession constructor hook
 	"github.com/cockroachdb/cockroach/pkg/sql/optionalnodeliveness"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire"
 	_ "github.com/cockroachdb/cockroach/pkg/sql/schemachanger/scjob" // register jobs declared outside of pkg/sql
@@ -408,15 +405,12 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 	// and after ValidateAddrs().
 	rpcContext.CheckCertificateAddrs(ctx)
 
-	requestMetrics := rpc.NewRequestMetrics()
-	appRegistry.AddMetricStruct(requestMetrics)
-
-	grpcServer, err := newGRPCServer(ctx, rpcContext, requestMetrics)
+	grpcServer, err := newGRPCServer(ctx, rpcContext, appRegistry)
 	if err != nil {
 		return nil, err
 	}
 
-	drpcServer, err := newDRPCServer(ctx, rpcContext, requestMetrics)
+	drpcServer, err := newDRPCServer(ctx, rpcContext)
 	if err != nil {
 		return nil, err
 	}
@@ -676,7 +670,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		options := storeliveness.NewOptions(livenessInterval, heartbeatInterval, supportGracePeriod)
 		transport, err := storeliveness.NewTransport(
 			cfg.AmbientCtx, stopper, clock, kvNodeDialer,
-			grpcServer.Server, drpcServer.DRPCServer, st, nil, /* knobs */
+			grpcServer.Server, drpcServer.DRPCServer, nil, /* knobs */
 		)
 		if err != nil {
 			return nil, err
@@ -908,16 +902,9 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 			uint64(kvserver.EagerLeaseAcquisitionConcurrency.Get(&cfg.Settings.SV)))
 	})
 
-	mmaAlloc, mmaAllocSync := func() (mmaprototype.Allocator, *mmaintegration.AllocatorSync) {
-		mmaAllocState := mmaprototype.NewAllocatorState(timeutil.DefaultTimeSource{}, stores,
-			rand.New(rand.NewSource(timeutil.Now().UnixNano())))
-		allocatorSync := mmaintegration.NewAllocatorSync(storePool, mmaAllocState, st, nil)
-		// We make sure that mmaAllocState is returned through the `Allocator`
-		// interface so that when looking up callers to the interface, we see this
-		// call site.
-		return mmaAllocState, allocatorSync
-	}()
-
+	mmaAllocator := mmaprototype.NewAllocatorState(timeutil.DefaultTimeSource{},
+		rand.New(rand.NewSource(timeutil.Now().UnixNano())))
+	allocatorSync := mmaintegration.NewAllocatorSync(storePool, mmaAllocator, st)
 	g.RegisterCallback(
 		gossip.MakePrefixPattern(gossip.KeyStoreDescPrefix),
 		func(_ string, content roachpb.Value, origTimestampNanos int64) {
@@ -927,8 +914,8 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 				return
 			}
 			storeLoadMsg := mmaintegration.MakeStoreLoadMsg(storeDesc, origTimestampNanos)
-			mmaAlloc.SetStore(state.StoreAttrAndLocFromDesc(storeDesc))
-			mmaAlloc.ProcessStoreLoadMsg(ctx, &storeLoadMsg)
+			mmaAllocator.SetStore(state.StoreAttrAndLocFromDesc(storeDesc))
+			mmaAllocator.ProcessStoreLoadMsg(context.TODO(), &storeLoadMsg)
 		},
 	)
 
@@ -943,8 +930,8 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		NodeLiveness:                 nodeLiveness,
 		StoreLiveness:                storeLiveness,
 		StorePool:                    storePool,
-		MMAllocator:                  mmaAlloc,
-		AllocatorSync:                mmaAllocSync,
+		MMAllocator:                  mmaAllocator,
+		AllocatorSync:                allocatorSync,
 		Transport:                    raftTransport,
 		NodeDialer:                   kvNodeDialer,
 		RPCContext:                   rpcContext,
@@ -1234,7 +1221,6 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		nodeDescs:                g,
 		systemConfigWatcher:      systemConfigWatcher,
 		spanConfigAccessor:       spanConfig.kvAccessor,
-		spanConfigReporter:       spanConfig.reporter,
 		keyVisServerAccessor:     keyVisServerAccessor,
 		kvNodeDialer:             kvNodeDialer,
 		distSender:               distSender,
@@ -1314,7 +1300,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		gw.RegisterService(grpcServer.Server)
 	}
 
-	for _, s := range []drpcServiceRegistrar{sAdmin, sStatus, &sTS} {
+	for _, s := range []drpcServiceRegistrar{sAdmin, sStatus, sAuth, &sTS} {
 		if err := s.RegisterDRPCService(drpcServer); err != nil {
 			return nil, err
 		}
@@ -1592,9 +1578,8 @@ func (s *topLevelServer) PreStart(ctx context.Context) error {
 	// startRPCServer (and for the loopback grpc-gw connection).
 	var initServer *initServer
 	{
-		getGRPCDialOpts := s.rpcContext.GRPCDialOptions
-		getDRPCDialOpts := s.rpcContext.DRPCDialOptions
-		initConfig := newInitServerConfig(ctx, s.cfg, getGRPCDialOpts, getDRPCDialOpts)
+		getDialOpts := s.rpcContext.GRPCDialOptions
+		initConfig := newInitServerConfig(ctx, s.cfg, getDialOpts)
 		inspectedDiskState, err := inspectEngines(
 			ctx,
 			s.engines,
@@ -1722,6 +1707,7 @@ func (s *topLevelServer) PreStart(ctx context.Context) error {
 		s.cfg.AmbientCtx,
 		s.rpcContext,
 		s.stopper,
+		s.grpc,
 		s.cfg.AdvertiseAddr,
 	)
 	if err != nil {
@@ -2017,12 +2003,7 @@ func (s *topLevelServer) PreStart(ctx context.Context) error {
 	// The writes will be async; we'll wait for the first one to go through
 	// later in this method, using the returned channel.
 	firstTSDBPollDone := s.tsDB.PollSource(
-		s.cfg.AmbientCtx, s.recorder, base.DefaultMetricsSampleInterval, ts.Resolution10s, s.stopper, false,
-	)
-
-	// high cardinality child metrics collector, we don't need to wait for the first one
-	s.tsDB.PollSource(
-		s.cfg.AmbientCtx, s.recorder, base.DefaultHighCardinalityMetricsSampleInterval, ts.Resolution1m, s.stopper, true,
+		s.cfg.AmbientCtx, s.recorder, base.DefaultMetricsSampleInterval, ts.Resolution10s, s.stopper,
 	)
 
 	// Export statistics to graphite, if enabled by configuration.
@@ -2149,9 +2130,7 @@ func (s *topLevelServer) PreStart(ctx context.Context) error {
 		}
 	}
 	var apiInternalServer http.Handler
-	var drpcEnabled = false
 	if rpcbase.TODODRPC && rpcbase.DRPCEnabled(ctx, s.cfg.Settings) {
-		drpcEnabled = true
 		// Pass our own node ID to connect to local RPC servers
 		apiInternalServer, err = apiinternal.NewAPIInternalServer(
 			ctx, s.kvNodeDialer, s.rpcContext.NodeID.Get(), s.cfg.Settings)
@@ -2175,6 +2154,7 @@ func (s *topLevelServer) PreStart(ctx context.Context) error {
 		s.adminAuthzCheck,            /* adminAuthzCheck */
 		s.recorder,                   /* metricSource */
 		s.runtime,                    /* runtimeStatsSampler */
+		gwMux,                        /* unauthenticatedGWMux */
 		apiInternalServer,            /* unauthenticatedAPIInternalServer */
 		s.debug,                      /* handleDebugUnauthenticated */
 		s.inspectzServer,             /* handleInspectzUnauthenticated */
@@ -2189,7 +2169,6 @@ func (s *topLevelServer) PreStart(ctx context.Context) error {
 			CanViewKvMetricDashboards:   s.rpcContext.TenantID.Equal(roachpb.SystemTenantID),
 			DisableKvLevelAdvancedDebug: false,
 		},
-		drpcEnabled,
 	); err != nil {
 		return err
 	}

@@ -16,11 +16,11 @@ import (
 
 const (
 	// rulesVersion version of elements that can be appended to rel rule names.
-	rulesVersion = "-26.1"
+	rulesVersion = "-25.4"
 )
 
 // rulesVersionKey version of elements used by this rule set.
-var rulesVersionKey = clusterversion.V26_1
+var rulesVersionKey = clusterversion.V25_4
 
 // descriptorIsNotBeingDropped creates a clause which leads to the outer clause
 // failing to unify if the passed element is part of a descriptor and
@@ -161,6 +161,11 @@ func isWithTypeTOrHasReferences(element scpb.Element) bool {
 
 func getExpression(element scpb.Element) (*scpb.Expression, error) {
 	switch e := element.(type) {
+	case *scpb.ColumnType:
+		if e == nil {
+			return nil, nil
+		}
+		return e.ComputeExpr, nil
 	case *scpb.ColumnComputeExpression:
 		if e == nil {
 			return nil, nil
@@ -246,9 +251,7 @@ func isColumnDependent(e scpb.Element) bool {
 	switch e.(type) {
 	case *scpb.ColumnType, *scpb.ColumnNotNull:
 		return true
-	case *scpb.ColumnName, *scpb.ColumnComment, *scpb.IndexColumn, *scpb.ColumnHidden:
-		return true
-	case *scpb.ColumnGeneratedAsIdentity:
+	case *scpb.ColumnName, *scpb.ColumnComment, *scpb.IndexColumn:
 		return true
 	}
 	return isColumnTypeDependent(e)
@@ -269,7 +272,6 @@ func isColumnNotNull(e scpb.Element) bool {
 	}
 	return false
 }
-
 func isColumnTypeDependent(e scpb.Element) bool {
 	switch e.(type) {
 	case *scpb.SequenceOwner, *scpb.ColumnDefaultExpression, *scpb.ColumnOnUpdateExpression, *scpb.ColumnComputeExpression:

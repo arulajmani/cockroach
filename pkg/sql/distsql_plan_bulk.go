@@ -24,7 +24,7 @@ func (dsp *DistSQLPlanner) SetupAllNodesPlanning(
 	ctx context.Context, evalCtx *extendedEvalContext, execCfg *ExecutorConfig,
 ) (*PlanningCtx, []base.SQLInstanceID, error) {
 	return dsp.SetupAllNodesPlanningWithOracle(
-		ctx, evalCtx, execCfg, physicalplan.DefaultReplicaChooser, []roachpb.Locality{}, NoStrictLocalityFiltering,
+		ctx, evalCtx, execCfg, physicalplan.DefaultReplicaChooser, roachpb.Locality{},
 	)
 }
 
@@ -38,26 +38,12 @@ func (dsp *DistSQLPlanner) SetupAllNodesPlanningWithOracle(
 	evalCtx *extendedEvalContext,
 	execCfg *ExecutorConfig,
 	oracle replicaoracle.Oracle,
-	localityFilters []roachpb.Locality,
-	strictFiltering bool,
+	localityFilter roachpb.Locality,
 ) (*PlanningCtx, []base.SQLInstanceID, error) {
-
-	if strictFiltering && len(localityFilters) == 0 {
-		return nil, nil, errors.New("strict locality filtering requested with no locality filters")
-	}
-
-	for _, lf := range localityFilters {
-		if lf.Empty() {
-			return nil, nil, errors.New("empty locality filter is not allowed")
-		}
-	}
-
 	if dsp.codec.ForSystemTenant() {
-		// TODO(yuzefovich): evaluate whether we can remove system tenant
-		// specific code.
-		return dsp.setupAllNodesPlanningSystem(ctx, evalCtx, execCfg, oracle, localityFilters, strictFiltering)
+		return dsp.setupAllNodesPlanningSystem(ctx, evalCtx, execCfg, oracle, localityFilter)
 	}
-	return dsp.setupAllNodesPlanningTenant(ctx, evalCtx, execCfg, oracle, localityFilters, strictFiltering)
+	return dsp.setupAllNodesPlanningTenant(ctx, evalCtx, execCfg, oracle, localityFilter)
 }
 
 // setupAllNodesPlanningSystem creates a planCtx and returns all nodes available
@@ -68,11 +54,10 @@ func (dsp *DistSQLPlanner) setupAllNodesPlanningSystem(
 	evalCtx *extendedEvalContext,
 	execCfg *ExecutorConfig,
 	oracle replicaoracle.Oracle,
-	localityFilters []roachpb.Locality,
-	strictFiltering bool,
+	localityFilter roachpb.Locality,
 ) (*PlanningCtx, []base.SQLInstanceID, error) {
 	planCtx := dsp.NewPlanningCtxWithOracle(
-		ctx, evalCtx, nil /* planner */, nil /* txn */, FullDistribution, oracle, localityFilters, strictFiltering,
+		ctx, evalCtx, nil /* planner */, nil /* txn */, FullDistribution, oracle, localityFilter,
 	)
 
 	ss, err := execCfg.NodesStatusServer.OptionalNodesStatusServer()
@@ -87,15 +72,8 @@ func (dsp *DistSQLPlanner) setupAllNodesPlanningSystem(
 	// planCtx.nodeStatuses map ourselves. checkInstanceHealthAndVersionSystem() will
 	// populate it.
 	for _, node := range resp.Nodes {
-		if len(localityFilters) == 0 {
+		if ok, _ := node.Desc.Locality.Matches(localityFilter); ok {
 			_ /* NodeStatus */ = dsp.checkInstanceHealthAndVersionSystem(ctx, planCtx, base.SQLInstanceID(node.Desc.NodeID))
-		} else {
-			for _, filter := range localityFilters {
-				if ok, _ := node.Desc.Locality.Matches(filter); ok {
-					_ /* NodeStatus */ = dsp.checkInstanceHealthAndVersionSystem(ctx, planCtx, base.SQLInstanceID(node.Desc.NodeID))
-					break
-				}
-			}
 		}
 	}
 	nodes := make([]base.SQLInstanceID, 0, len(planCtx.nodeStatuses))
@@ -115,11 +93,10 @@ func (dsp *DistSQLPlanner) setupAllNodesPlanningTenant(
 	evalCtx *extendedEvalContext,
 	execCfg *ExecutorConfig,
 	oracle replicaoracle.Oracle,
-	localityFilters []roachpb.Locality,
-	strictFiltering bool,
+	localityFilter roachpb.Locality,
 ) (*PlanningCtx, []base.SQLInstanceID, error) {
 	planCtx := dsp.NewPlanningCtxWithOracle(
-		ctx, evalCtx, nil /* planner */, nil /* txn */, FullDistribution, oracle, localityFilters, strictFiltering,
+		ctx, evalCtx, nil /* planner */, nil /* txn */, FullDistribution, oracle, localityFilter,
 	)
 	pods, err := dsp.sqlAddressResolver.GetAllInstances(ctx)
 	if err != nil {
@@ -129,15 +106,8 @@ func (dsp *DistSQLPlanner) setupAllNodesPlanningTenant(
 
 	sqlInstanceIDs := make([]base.SQLInstanceID, 0, len(pods))
 	for _, pod := range pods {
-		if len(localityFilters) == 0 {
+		if ok, _ := pod.Locality.Matches(localityFilter); ok {
 			sqlInstanceIDs = append(sqlInstanceIDs, pod.InstanceID)
-		} else {
-			for _, locality := range localityFilters {
-				if ok, _ := pod.Locality.Matches(locality); ok {
-					sqlInstanceIDs = append(sqlInstanceIDs, pod.InstanceID)
-					break
-				}
-			}
 		}
 	}
 	return planCtx, sqlInstanceIDs, nil

@@ -165,8 +165,7 @@ func (lq *leaseQueue) Tick(ctx context.Context, tick time.Time, s state.State) {
 		}
 
 		lq.next, lq.lastSyncChangeID = pushReplicateChange(
-			ctx, roachpb.StoreID(lq.storeID), change, repl, tick, lq.settings.ReplicaChangeDelayFn(),
-			lq.baseQueue.stateChanger, lq.as, "lease queue")
+			ctx, change, repl, tick, lq.settings.ReplicaChangeDelayFn(), lq.baseQueue.stateChanger, lq.as, "lease queue")
 	}
 
 	lq.lastTick = tick
