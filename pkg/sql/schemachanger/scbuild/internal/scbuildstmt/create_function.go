@@ -19,7 +19,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlerrors"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
-	"github.com/cockroachdb/cockroach/pkg/util/errorutil/unimplemented"
 	"github.com/cockroachdb/errors"
 	"github.com/lib/pq/oid"
 )
@@ -30,20 +29,11 @@ func CreateFunction(b BuildCtx, n *tree.CreateRoutine) {
 	}
 	b.IncrementSchemaChangeCreateCounter("function")
 
-	var dbElts, scElts ElementResultSet
-	if resolveTemporaryStatus(n.Name.ObjectNamePrefix, tree.PersistencePermanent) {
-		dbElts, scElts = MaybeCreateOrResolveTemporarySchema(b)
-	} else {
-		dbElts, scElts = b.ResolveTargetObject(n.Name.ToUnresolvedObjectName(), privilege.CREATE)
-	}
+	dbElts, scElts := b.ResolveTargetObject(n.Name.ToUnresolvedObjectName(), privilege.CREATE)
 	_, _, sc := scpb.FindSchema(scElts)
 	_, _, db := scpb.FindDatabase(dbElts)
 	_, _, scName := scpb.FindNamespace(scElts)
 	_, _, dbname := scpb.FindNamespace(dbElts)
-
-	if sc.IsTemporary {
-		panic(unimplemented.NewWithIssue(104687, "cannot create user-defined functions under a temporary schema"))
-	}
 
 	n.Name.SchemaName = tree.Name(scName.Name)
 	n.Name.CatalogName = tree.Name(dbname.Name)
@@ -237,12 +227,6 @@ func validateFunctionRelationReferences(
 ) {
 	for _, id := range refProvider.ReferencedRelationIDs().Ordered() {
 		_, _, namespace := scpb.FindNamespace(b.QueryByID(id))
-		if namespace == nil {
-			// Relations should have Namespace elements. If not found, this could
-			// indicate an internal error or an unexpected descriptor type.
-			panic(errors.AssertionFailedf(
-				"cannot find Namespace element for referenced relation ID %d", id))
-		}
 		if namespace.DatabaseID != parentDBID {
 			panic(pgerror.Newf(
 				pgcode.FeatureNotSupported,

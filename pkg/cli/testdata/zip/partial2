@@ -1,6 +1,6 @@
 zip
 ----
-debug zip --concurrency=1 --cpu-profile-duration=0 --validate-zip-file=false --cluster-name=<cluster-name> /dev/null
+debug zip --concurrency=1 --cpu-profile-duration=0 --cluster-name=<cluster-name> /dev/null
 [cluster] discovering virtual clusters... done
 [cluster] creating output file /dev/null... done
 [cluster] establishing RPC connection to ...
@@ -23,7 +23,6 @@ debug zip --concurrency=1 --cpu-profile-duration=0 --validate-zip-file=false --c
 [node 1] requesting data for debug/nodes/1/gossip... received response... writing JSON output: debug/nodes/1/gossip.json... done
 [node 1] requesting stacks... received response... writing binary output: debug/nodes/1/stacks.txt... done
 [node 1] requesting stacks with labels... received response... writing binary output: debug/nodes/1/stacks_with_labels.txt... done
-[node 1] requesting goroutine profile... received response... writing binary output: debug/nodes/1/stacks.pprof... done
 [node 1] requesting heap profile... received response... writing binary output: debug/nodes/1/heap.pprof... done
 [node 1] requesting engine stats... received response... writing binary output: debug/nodes/1/lsm.txt... done
 [node 1] requesting heap profile list... received response...
@@ -35,9 +34,6 @@ debug zip --concurrency=1 --cpu-profile-duration=0 --validate-zip-file=false --c
 [node 1] requesting cpu profile list... received response...
 [node 1] requesting cpu profile list: last request failed: rpc error: ...
 [node 1] requesting cpu profile list: creating error output: debug/nodes/1/cpuprof.err.txt... done
-[node 1] requesting execution trace list... received response...
-[node 1] requesting execution trace list: last request failed: rpc error: ...
-[node 1] requesting execution trace list: creating error output: debug/nodes/1/executiontraces.err.txt... done
 [node 1] requesting log files list... received response... done
 [node ?] ? log files found
 [node 1] requesting ranges... received response... done
@@ -49,7 +45,6 @@ debug zip --concurrency=1 --cpu-profile-duration=0 --validate-zip-file=false --c
 [node 3] requesting data for debug/nodes/3/gossip... received response... writing JSON output: debug/nodes/3/gossip.json... done
 [node 3] requesting stacks... received response... writing binary output: debug/nodes/3/stacks.txt... done
 [node 3] requesting stacks with labels... received response... writing binary output: debug/nodes/3/stacks_with_labels.txt... done
-[node 3] requesting goroutine profile... received response... writing binary output: debug/nodes/3/stacks.pprof... done
 [node 3] requesting heap profile... received response... writing binary output: debug/nodes/3/heap.pprof... done
 [node 3] requesting engine stats... received response... writing binary output: debug/nodes/3/lsm.txt... done
 [node 3] requesting heap profile list... received response...
@@ -61,9 +56,6 @@ debug zip --concurrency=1 --cpu-profile-duration=0 --validate-zip-file=false --c
 [node 3] requesting cpu profile list... received response...
 [node 3] requesting cpu profile list: last request failed: rpc error: ...
 [node 3] requesting cpu profile list: creating error output: debug/nodes/3/cpuprof.err.txt... done
-[node 3] requesting execution trace list... received response...
-[node 3] requesting execution trace list: last request failed: rpc error: ...
-[node 3] requesting execution trace list: creating error output: debug/nodes/3/executiontraces.err.txt... done
 [node 3] requesting log files list... received response... done
 [node ?] ? log files found
 [node 3] requesting ranges... received response... done

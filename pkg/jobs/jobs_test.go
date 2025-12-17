@@ -8,6 +8,7 @@ package jobs_test
 import (
 	"context"
 	gosql "database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -231,7 +232,14 @@ func (rts *registryTestSuite) setUp(t *testing.T) func() {
 		t,
 		[]logpb.Channel{logpb.Channel_OPS},
 		[]string{"status_change"},
-		logtestutils.FromLogEntry[eventpb.StatusChange],
+		func(entry logpb.Entry) (eventpb.StatusChange, error) {
+			var structuredPayload eventpb.StatusChange
+			err := json.Unmarshal([]byte(entry.Message[entry.StructuredStart:entry.StructuredEnd]), &structuredPayload)
+			if err != nil {
+				return structuredPayload, err
+			}
+			return structuredPayload, nil
+		},
 	)
 
 	rts.statusChangeLogSpy = spy
@@ -377,7 +385,7 @@ func (rts *registryTestSuite) checkStateChangeLog(
 				jobEventsLog.PreviousStatus == string(expectedPrevState) &&
 				jobEventsLog.NewStatus == string(expectedNewState) &&
 				strings.Contains(jobEventsLog.Error, expectedError) {
-				rts.statusChangeLogSpy.SetLastNLogsAsUnread(logpb.Channel_OPS, len(logs)-i)
+				rts.statusChangeLogSpy.SetLastNLogsAsUnread(logpb.Channel_OPS, len(logs)-i+1)
 				return nil
 			}
 		}
@@ -392,7 +400,6 @@ func (rts *registryTestSuite) idb() isql.DB {
 func TestRegistryLifecycle(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
-	skip.WithIssue(t, 152542)
 
 	t.Run("normal success", func(t *testing.T) {
 		rts := registryTestSuite{}
@@ -870,17 +877,10 @@ func TestRegistryLifecycle(t *testing.T) {
 		defer rts.setUp(t)()
 		defer rts.tearDown()
 
-		// Pick an ID so we know which job to mess with.
-		id := rts.registry.MakeJobID()
-		rts.mockJob.JobID = id
-
 		// Inject an error in the update to move the job to "succeeded" one time.
 		var failed atomic.Value
 		failed.Store(false)
 		rts.beforeUpdate = func(orig, updated jobs.JobMetadata) error {
-			if orig.ID != id {
-				return nil
-			}
 			if updated.State == jobs.StateSucceeded && !failed.Load().(bool) {
 				failed.Store(true)
 				return errors.New("boom")
@@ -1187,7 +1187,7 @@ func TestJobLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	var params base.TestServerArgs
-	params.Knobs.JobsTestingKnobs = &jobs.TestingKnobs{DisableRegistryLifecycleManagement: true}
+	params.Knobs.JobsTestingKnobs = &jobs.TestingKnobs{DisableRegistryLifecycleManagent: true}
 	srv, sqlDB, _ := serverutils.StartServer(t, params)
 	defer srv.Stopper().Stop(ctx)
 	s := srv.ApplicationLayer()
@@ -1847,19 +1847,6 @@ func TestShowJobs(t *testing.T) {
 
 			if maybeFractionCompleted != nil {
 				out.fractionCompleted = *maybeFractionCompleted
-			}
-
-			// Confirm SHOW JOBS matches.
-			var shownTyp string
-			var shownTS *apd.Decimal
-			sqlDB.QueryRow(t, `SELECT job_type, resolved_timestamp FROM [SHOW JOBS SELECT $1 WITH RESOLVED TIMESTAMP]`, in.id).Scan(&shownTyp, &shownTS)
-			if shownTyp != out.typ {
-				t.Fatalf("expected SHOW JOBS to return type %s but found %s", in.typ, shownTyp)
-			}
-			if !out.highWater.IsEmpty() {
-				shownHLC, err := hlc.DecimalToHLC(shownTS)
-				require.NoError(t, err)
-				require.True(t, out.highWater.Equal(shownHLC))
 			}
 
 			// details field is not explicitly checked for equality; its value is
@@ -2888,6 +2875,7 @@ func TestMetrics(t *testing.T) {
 			require.Equal(t, int64(1), importMetrics.CurrentlyRunning.Value())
 			errCh <- nil
 			int64EqSoon(t, importMetrics.FailOrCancelCompleted.Count, 1)
+			int64EqSoon(t, importMetrics.FailOrCancelFailed.Count, 0)
 		}
 	})
 }
@@ -3229,7 +3217,7 @@ func TestJobTypeMetrics(t *testing.T) {
 
 	checkPTSCounts := func(typ jobspb.Type, count int64) {
 		testutils.SucceedsSoon(t, func() error {
-			m := reg.MetricsStruct().JobPTSMetrics[typ]
+			m := reg.MetricsStruct().JobMetrics[typ]
 			if m.NumJobsWithPTS.Value() == count && (count == 0 || m.ProtectedAge.Value() > 0) {
 				return nil
 			}
@@ -3329,67 +3317,4 @@ func TestLoadJobProgress(t *testing.T) {
 	p, err := jobs.LoadJobProgress(ctx, s.InternalDB().(isql.DB), 7)
 	require.NoError(t, err)
 	require.Equal(t, []float32{7.1}, p.GetDetails().(*jobspb.Progress_Import).Import.ReadProgress)
-}
-
-func TestAdoptionDelayAfterJobFailure(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-	defer jobs.ResetConstructors()()
-
-	ctx := context.Background()
-	adoptionCompleted := make(chan struct{})
-	// We disable the adoption loop to prevent adoption attempts from laying a
-	// claim on a failed job before we can verify the behavior.
-	knobs := jobs.NewTestingKnobsWithIntervals(time.Hour, time.Hour, time.Hour, time.Hour)
-
-	var testJobID jobspb.JobID
-	knobs.AfterJobStateMachine = func(id jobspb.JobID) {
-		if id != testJobID {
-			return
-		}
-		close(adoptionCompleted)
-	}
-
-	s, db, _ := serverutils.StartServer(t, base.TestServerArgs{
-		Knobs: base.TestingKnobs{
-			JobsTestingKnobs: knobs,
-		},
-	})
-	defer s.Stopper().Stop(ctx)
-
-	cleanup := jobs.TestingRegisterConstructor(
-		jobspb.TypeRestore,
-		func(job *jobs.Job, settings *cluster.Settings) jobs.Resumer {
-			return jobstest.FakeResumer{
-				OnResume: func(ctx context.Context) error {
-					return errors.New("job failed")
-				},
-				FailOrCancel: func(ctx context.Context) error {
-					return errors.New("job fast-failed reverting")
-				},
-			}
-		},
-		jobs.UsesTenantCostControl,
-	)
-	defer cleanup()
-
-	registry := s.JobRegistry().(*jobs.Registry)
-	rec := jobs.Record{
-		Details:  jobspb.RestoreDetails{},
-		Progress: jobspb.RestoreProgress{},
-		Username: username.TestUserName(),
-	}
-
-	testJobID = registry.MakeJobID()
-	_, err := registry.CreateAdoptableJobWithTxn(ctx, rec, testJobID, nil /* txn */)
-	require.NoError(t, err)
-	registry.TestingNudgeAdoptionQueue()
-
-	<-adoptionCompleted
-	var claimID gosql.NullInt64
-	err = db.QueryRow(
-		"SELECT claim_instance_id FROM system.jobs WHERE id = $1", testJobID,
-	).Scan(&claimID)
-	require.NoError(t, err)
-	require.True(t, claimID.Valid, "expected job to still have a claim_instance_id after failure")
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/parser"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
-	"github.com/cockroachdb/cockroach/pkg/sql/privilege"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/cast"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/idxtype"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
@@ -75,13 +74,6 @@ type mutationBuilder struct {
 	// targetColSet contains the same column IDs as targetColList, but as a set.
 	targetColSet opt.ColSet
 
-	// explicitTargetColOrds contains the ordinals of the columns in targetColSet
-	// that were explicitly specified by the user, e.g. in the target column list
-	// of an INSERT or the SET clause of an UPDATE. This is used to determine
-	// which columns to add to the list of dependencies if b.trackSchemaDeps is
-	// true.
-	explicitTargetColOrds intsets.Fast
-
 	// insertColIDs lists the input column IDs providing values to insert. Its
 	// length is always equal to the number of columns in the target table,
 	// including mutation columns. Table columns which will not have values
@@ -93,8 +85,6 @@ type mutationBuilder struct {
 	// explicit values in the insert statement, if b.trackSchemaDeps is true.
 	// It does not include columns that were explicitly given the value of
 	// DEFAULT, e.g., INSERT INTO t VALUES (1, DEFAULT).
-	// TODO(drewk): Remove this once we make the improved dependency tracking
-	// unconditional and use_improved_routine_dependency_tracking becomes a no-op.
 	implicitInsertCols opt.ColSet
 
 	// fetchColIDs lists the input column IDs storing values which are fetched
@@ -254,12 +244,6 @@ type mutationBuilder struct {
 	// uniqueWithTombstoneIndexes is the set of unique indexes that ensure uniqueness
 	// by writing tombstones to all partitions
 	uniqueWithTombstoneIndexes intsets.Fast
-
-	// regionColExplicitlyMutated is true if the target table is regional-by-row
-	// and the value for the region column is explicitly specified for insert or
-	// update. Example:
-	//   INSERT INTO t (a, b, region) VALUES (1, 2, 'us-east-1');
-	regionColExplicitlyMutated bool
 }
 
 func (mb *mutationBuilder) init(b *Builder, opName string, tab cat.Table, alias tree.TableName) {
@@ -612,18 +596,8 @@ func (mb *mutationBuilder) addTargetCol(ord int) {
 			"multiple assignments to the same column %q", tabCol.ColName()))
 	}
 	mb.targetColSet.Add(colID)
-	mb.targetColList = append(mb.targetColList, colID)
-	mb.explicitTargetColOrds.Add(ord)
-}
 
-// trackTargetColDeps adds column dependencies for the target columns that were
-// explicitly specified by the user.
-func (mb *mutationBuilder) trackTargetColDeps() {
-	if mb.b.trackSchemaDeps && mb.b.evalCtx.SessionData().PreventUpdateSetColumnDrop {
-		dep := opt.SchemaDep{DataSource: mb.tab}
-		dep.ColumnOrdinals.CopyFrom(mb.explicitTargetColOrds)
-		mb.b.schemaDeps = append(mb.b.schemaDeps, dep)
-	}
+	mb.targetColList = append(mb.targetColList, colID)
 }
 
 // extractValuesInput tests whether the given input is a VALUES clause with no
@@ -649,21 +623,6 @@ func (mb *mutationBuilder) extractValuesInput(inputRows *tree.Select) *tree.Valu
 	}
 
 	return nil
-}
-
-// setRegionColExplicitlyMutated should be called for the insert and update
-// columns of an INSERT, UPDATE, or UPSERT statement before building the
-// synthesized columns. It keeps track of whether the region column is
-// explicitly mutated in the statement (e.g. with user-provided values).
-func (mb *mutationBuilder) setRegionColExplicitlyMutated(explicitCols opt.OptionalColList) {
-	if !mb.tab.IsRegionalByRow() {
-		return
-	}
-	// The region column is always the first column in the primary index.
-	regionColOrd := mb.tab.Index(cat.PrimaryIndex).Column(0).Ordinal()
-	if explicitCols[regionColOrd] != 0 {
-		mb.regionColExplicitlyMutated = true
-	}
 }
 
 // replaceDefaultExprs looks for DEFAULT specifiers in input value expressions
@@ -829,14 +788,6 @@ func (mb *mutationBuilder) addSynthesizedDefaultCols(
 func (mb *mutationBuilder) addSynthesizedComputedCols(
 	colIDs opt.OptionalColList, targetColList *opt.ColList, targetColSet *opt.ColSet, restrict bool,
 ) {
-	if mb.b.evalCtx.SessionData().UseImprovedRoutineDepsTriggersAndComputedCols {
-		// Avoid adding unnecessary dependencies on columns that are referenced by
-		// computed column expressions. We only need to track columns that were
-		// explicitly specified by the user, e.g. those in SET, WHERE or RETURNING
-		// clause, or the target columns of an INSERT.
-		defer mb.b.DisableSchemaDepTracking()()
-	}
-
 	// We will construct a new Project operator that will contain the newly
 	// synthesized column(s).
 	pb := makeProjectionBuilder(mb.b, mb.outScope)
@@ -902,11 +853,6 @@ func (mb *mutationBuilder) addSynthesizedComputedCols(
 		// Remember id of newly synthesized column.
 		colIDs[i] = newCol
 
-		// Track columns that were not explicitly set in the insert statement.
-		if mb.b.trackSchemaDeps && mb.b.evalCtx.SessionData().UseImprovedRoutineDependencyTracking {
-			mb.implicitInsertCols.Add(newCol)
-		}
-
 		// Add corresponding target column.
 		if targetColList != nil {
 			*targetColList = append(*targetColList, tabColID)
@@ -917,172 +863,6 @@ func (mb *mutationBuilder) addSynthesizedComputedCols(
 	}
 
 	mb.outScope = pb.Finish()
-}
-
-// maybeAddRegionColLookup adds a lookup join to the target table of a foreign
-// key constraint specified by the "infer_rbr_region_col_using_constraint"
-// storage param, if any. It is used by INSERT, UPDATE, and UPSERT statements to
-// determine the correct value of the region column for a REGIONAL BY ROW table.
-func (mb *mutationBuilder) maybeAddRegionColLookup(op opt.Operator) {
-	switch op {
-	case opt.InsertOp, opt.UpdateOp, opt.UpsertOp:
-	default:
-		panic(errors.AssertionFailedf("maybeAddRegionColLookup called with unexpected operator %s", op))
-	}
-	if !mb.tab.IsRegionalByRow() {
-		return
-	}
-	if mb.regionColExplicitlyMutated {
-		// Allow the user to explicitly set the region column value, overriding the
-		// storage param.
-		return
-	}
-	lookupFK := mb.tab.RegionalByRowUsingConstraint()
-	if lookupFK == nil {
-		return
-	}
-	// An UPDATE may not be mutating any of the foreign-key columns, in which case
-	// we can stop early.
-	if op == opt.UpdateOp {
-		fkColIsMutated := false
-		for colIdx := range lookupFK.ColumnCount() {
-			if mb.updateColIDs[lookupFK.OriginColumnOrdinal(mb.tab, colIdx)] != 0 {
-				fkColIsMutated = true
-				break
-			}
-		}
-		if !fkColIsMutated {
-			return
-		}
-	}
-	if mb.b.evalCtx.SessionData().UseImprovedRoutineDepsTriggersAndComputedCols {
-		// It is not necessary to add transitive dependencies on the objects
-		// resolved below, since the schema changer already ensures that they are
-		// not dropped if "infer_rbr_region_col_using_constraint" is set.
-		defer mb.b.DisableSchemaDepTracking()()
-	}
-
-	// Resolve the referenced table.
-	refTabDescID := int64(lookupFK.ReferencedTableID())
-	refTab := mb.b.resolveTableRef(&tree.TableRef{TableID: refTabDescID}, privilege.SELECT)
-	refTabMeta := mb.b.addTable(refTab, tree.NewUnqualifiedTableName(refTab.Name()))
-	refTabID := refTabMeta.MetaID
-
-	// Use the foreign-key columns (apart from the region column, if present) to
-	// plan a join against the referenced table. The schema changer has already
-	// verified that the foreign-key contains the region column, so performing a
-	// lookup using the remaining columns allows us to infer the correct value for
-	// the region column.
-	//
-	// NOTE: The region column is always the first column in the primary index.
-	f := mb.b.factory
-	joinCond := make(memo.FiltersExpr, 0, lookupFK.ColumnCount())
-	originRegionColOrd := mb.tab.Index(cat.PrimaryIndex).Column(0).Ordinal()
-	var refLookupCols opt.ColSet
-	var originRegionColID, lookupRegionColID opt.ColumnID
-	for colIdx := range lookupFK.ColumnCount() {
-		originColID := mb.mapToReturnColID(lookupFK.OriginColumnOrdinal(mb.tab, colIdx))
-		refColID := refTabID.ColumnID(lookupFK.ReferencedColumnOrdinal(refTab, colIdx))
-		if lookupFK.OriginColumnOrdinal(mb.tab, colIdx) == originRegionColOrd {
-			originRegionColID = originColID
-			lookupRegionColID = refColID
-			continue
-		}
-		eqExpr := f.ConstructEq(f.ConstructVariable(originColID), f.ConstructVariable(refColID))
-		joinCond = append(joinCond, f.ConstructFiltersItem(eqExpr))
-		refLookupCols.Add(refColID)
-	}
-	if len(joinCond) == 0 {
-		panic(errors.AssertionFailedf(
-			"unable to determine lookup columns using constraint %q", lookupFK.Name()))
-	}
-	if originRegionColID == 0 || lookupRegionColID == 0 {
-		panic(errors.AssertionFailedf(
-			"expected region column to be part of foreign key constraint %q", lookupFK.Name()))
-	}
-	md := mb.b.factory.Metadata()
-	if !md.ColumnMeta(originRegionColID).Type.Identical(md.ColumnMeta(lookupRegionColID).Type) {
-		panic(errors.AssertionFailedf("expected parent and child region column types to be identical"))
-	}
-	// For non-serializable isolation (or when the var is set), take a shared lock
-	// when reading from the parent table. This prevents concurrent transactions
-	// from invalidating the looked-up region column value. This isn't necessary
-	// for correctness since FK checks still run, but avoids returning an error
-	// unnecessarily to the user.
-	locking := noRowLocking
-	if mb.b.evalCtx.TxnIsoLevel != isolation.Serializable ||
-		mb.b.evalCtx.SessionData().ImplicitFKLockingForSerializable {
-		locking = lockingSpec{
-			&lockingItem{
-				item: &tree.LockingItem{
-					Strength:   tree.ForShare,
-					WaitPolicy: tree.LockWaitBlock,
-				},
-			},
-		}
-	}
-	refScope := mb.b.buildScan(
-		refTabMeta,
-		tableOrdinals(refTab, columnKinds{
-			includeMutations: false,
-			includeSystem:    false,
-			includeInverted:  false,
-		}),
-		&tree.IndexFlags{
-			IgnoreForeignKeys: true,
-			AvoidFullScan:     mb.b.evalCtx.SessionData().AvoidFullTableScansInMutations,
-		},
-		locking,
-		mb.b.allocScope(),
-		true, /* disableNotVisibleIndex */
-		// The scan is exempt from RLS to maintain data integrity.
-		cat.PolicyScopeExempt,
-	)
-	if !refScope.expr.Relational().FuncDeps.ColsAreLaxKey(refLookupCols) {
-		// The lookup columns must be a lax key, otherwise the join may return
-		// multiple rows for a single row in the target table. This should already
-		// be enforced by the foreign-key constraint.
-		panic(errors.AssertionFailedf(
-			"lookup columns using constraint %q must be a lax key", lookupFK.Name()))
-	}
-	var joinFlags memo.JoinFlags
-	if mb.b.evalCtx.SessionData().PreferLookupJoinsForFKs {
-		joinFlags = memo.PreferLookupJoinIntoRight
-	}
-	mb.outScope.expr = mb.b.factory.ConstructLeftJoin(
-		mb.outScope.expr, refScope.expr, joinCond, &memo.JoinPrivate{Flags: joinFlags},
-	)
-	// Build a CASE expression to determine the final value of the region column.
-	// Use the looked-up value if non-NULL, and otherwise use the default value
-	// which was already projected in the input.
-	regionColType := md.ColumnMeta(originRegionColID).Type
-	caseExpr := mb.b.factory.ConstructCase(
-		memo.TrueSingleton,
-		memo.ScalarListExpr{
-			f.ConstructWhen(
-				f.ConstructIs(f.ConstructVariable(lookupRegionColID), f.ConstructNull(regionColType)),
-				f.ConstructVariable(originRegionColID),
-			)},
-		f.ConstructVariable(lookupRegionColID),
-	)
-	regionColName := mb.tab.Column(originRegionColOrd).ColName()
-	colName := scopeColName(regionColName).WithMetadataName(
-		fmt.Sprintf("fk_lookup_%s", regionColName),
-	)
-	newOutScope := mb.outScope.replace()
-	newOutScope.appendColumnsFromScope(mb.outScope)
-	regionCol := mb.b.synthesizeColumn(newOutScope, colName, regionColType, nil /* expr */, caseExpr)
-	mb.b.constructProjectForScope(mb.outScope, newOutScope)
-	mb.outScope = newOutScope
-
-	// Whether a row is inserted or updated, it will use the newly calculated
-	// value for the region column.
-	if op == opt.InsertOp || op == opt.UpsertOp {
-		mb.insertColIDs[originRegionColOrd] = regionCol.id
-	}
-	if op == opt.UpdateOp || op == opt.UpsertOp {
-		mb.updateColIDs[originRegionColOrd] = regionCol.id
-	}
 }
 
 // addCheckConstraintCols synthesizes a boolean output column for each check
@@ -1097,13 +877,6 @@ func (mb *mutationBuilder) maybeAddRegionColLookup(op opt.Operator) {
 func (mb *mutationBuilder) addCheckConstraintCols(
 	isUpdate bool, policyCmdScope cat.PolicyCommandScope, includeSelectPolicies bool,
 ) {
-	if mb.b.evalCtx.SessionData().UseImprovedRoutineDepsTriggersAndComputedCols {
-		// Avoid adding unnecessary dependencies on columns that are referenced by
-		// check expressions. We only need to track columns that were explicitly
-		// specified by the user, e.g. those in SET, WHERE or RETURNING clause, or
-		// the target columns of an INSERT.
-		defer mb.b.DisableSchemaDepTracking()()
-	}
 	if mb.tab.CheckCount() != 0 {
 		projectionsScope := mb.outScope.replace()
 		projectionsScope.appendColumnsFromScope(mb.outScope)
@@ -1515,11 +1288,6 @@ func (mb *mutationBuilder) projectPartialIndexPutAndDelCols() {
 // projectPartialIndexDelCols, or projectPartialIndexPutAndDelCols.
 func (mb *mutationBuilder) projectPartialIndexColsImpl(putScope, delScope *scope) {
 	if partialIndexCount(mb.tab) > 0 {
-		if mb.b.evalCtx.SessionData().UseImprovedRoutineDepsTriggersAndComputedCols {
-			// Avoid unnecessary dependencies on columns and UDTs referenced by the
-			// partial index expression.
-			defer mb.b.DisableSchemaDepTracking()()
-		}
 		projectionScope := mb.outScope.replace()
 		projectionScope.appendColumnsFromScope(mb.outScope)
 
@@ -1700,6 +1468,9 @@ func (mb *mutationBuilder) projectVectorIndexColsImpl(op opt.Operator) {
 func (mb *mutationBuilder) buildVectorMutationSearch(
 	input memo.RelExpr, index cat.Index, partitionCol, quantizedVecCol opt.ColumnID, isIndexPut bool,
 ) memo.RelExpr {
+	if index.IsTemporaryIndexForBackfill() {
+		panic(unimplemented.NewWithIssue(144443, "Cannot write to a vector index while it is being built"))
+	}
 	getCol := func(colOrd int) (colID opt.ColumnID) {
 		// Check in turn if the column is being upserted, inserted, updated, or
 		// fetched.
@@ -1940,7 +1711,7 @@ func (mb *mutationBuilder) buildReturningScopes(
 	//   4. Project columns in same order as defined in table schema.
 	//
 	inScope = mb.outScope.replace()
-	mb.b.appendOrdinaryColumnsFromTable(inScope, mb.md.TableMeta(mb.tabID), &mb.alias)
+	inScope.appendOrdinaryColumnsFromTable(mb.md.TableMeta(mb.tabID), &mb.alias)
 
 	// extraAccessibleCols contains all the columns that the RETURNING
 	// clause can refer to in addition to the table columns. This is useful for
