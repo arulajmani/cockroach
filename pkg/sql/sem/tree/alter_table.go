@@ -527,7 +527,7 @@ type AlterTableDropStored struct {
 	Column Name
 }
 
-// GetColumn implements the ColumnMutationCmd interface.
+// GetColumn implemnets the ColumnMutationCmd interface.
 func (node *AlterTableDropStored) GetColumn() Name {
 	return node.Column
 }
@@ -714,27 +714,6 @@ func (node *AlterTableSetSchema) TelemetryName() string {
 	return "set_schema"
 }
 
-// AlterTableSetLogged represents an ALTER TABLE SET {LOGGED | UNLOGGED}
-type AlterTableSetLogged struct {
-	Name     *UnresolvedObjectName
-	IfExists bool
-	IsLogged bool
-}
-
-// Format implements the NodeFormatter interface.
-func (node *AlterTableSetLogged) Format(ctx *FmtCtx) {
-	ctx.WriteString("ALTER TABLE ")
-	if node.IfExists {
-		ctx.WriteString("IF EXISTS ")
-	}
-	ctx.FormatNode(node.Name)
-	if node.IsLogged {
-		ctx.WriteString(" SET LOGGED")
-	} else {
-		ctx.WriteString(" SET UNLOGGED")
-	}
-}
-
 // AlterTableOwner represents an ALTER TABLE OWNER TO command.
 type AlterTableOwner struct {
 	Name           *UnresolvedObjectName
@@ -778,7 +757,7 @@ type AlterTableAddIdentity struct {
 	Qualification ColumnQualification
 }
 
-// GetColumn implements the ColumnMutationCmd interface.
+// GetColumn implemnets the ColumnMutationCmd interface.
 func (node *AlterTableAddIdentity) GetColumn() Name {
 	return node.Column
 }
@@ -814,7 +793,7 @@ type AlterTableSetIdentity struct {
 	GeneratedAsIdentityType GeneratedIdentityType
 }
 
-// GetColumn implements the ColumnMutationCmd interface.
+// GetColumn implemnets the ColumnMutationCmd interface.
 func (node *AlterTableSetIdentity) GetColumn() Name {
 	return node.Column
 }
@@ -843,7 +822,7 @@ type AlterTableIdentity struct {
 	SeqOptions SequenceOptions
 }
 
-// GetColumn implements the ColumnMutationCmd interface.
+// GetColumn implemnets the ColumnMutationCmd interface.
 func (node *AlterTableIdentity) GetColumn() Name {
 	return node.Column
 }
@@ -873,7 +852,7 @@ type AlterTableDropIdentity struct {
 	IfExists bool
 }
 
-// GetColumn implements the ColumnMutationCmd interface.
+// GetColumn implemnets the ColumnMutationCmd interface.
 func (node *AlterTableDropIdentity) GetColumn() Name {
 	return node.Column
 }

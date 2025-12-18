@@ -17,7 +17,10 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/docs"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
+	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
 	"github.com/cockroachdb/cockroach/pkg/kv"
+	"github.com/cockroachdb/cockroach/pkg/scheduledjobs"
+	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/server/telemetry"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
@@ -53,13 +56,15 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/storageparam"
 	"github.com/cockroachdb/cockroach/pkg/sql/storageparam/indexstorageparam"
 	"github.com/cockroachdb/cockroach/pkg/sql/storageparam/tablestorageparam"
-	"github.com/cockroachdb/cockroach/pkg/sql/ttl/ttlinit"
+	"github.com/cockroachdb/cockroach/pkg/sql/ttl/ttlbase"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/sql/vecindex"
 	"github.com/cockroachdb/cockroach/pkg/util/errorutil/unimplemented"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log/eventpb"
+	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 	"github.com/cockroachdb/errors"
+	pbtypes "github.com/gogo/protobuf/types"
 	"github.com/lib/pq/oid"
 )
 
@@ -565,6 +570,7 @@ func (n *createTableNode) startExec(params runParams) error {
 			ti := tableInserterPool.Get().(*tableInserter)
 			*ti = tableInserter{ri: ri}
 			defer func() {
+				ti.close(params.ctx)
 				*ti = tableInserter{}
 				tableInserterPool.Put(ti)
 			}()
@@ -591,8 +597,8 @@ func (n *createTableNode) startExec(params runParams) error {
 					break
 				}
 
-				// Periodically flush out the SQL-level batches, so that we don't
-				// issue gigantic raft commands.
+				// Periodically flush out the batches, so that we don't issue gigantic
+				// raft commands.
 				if ti.currentBatchSize >= ti.maxBatchSize ||
 					ti.b.ApproximateMutationBytes() >= ti.maxBatchByteSize {
 					if err := ti.flushAndStartNewBatch(params.ctx); err != nil {
@@ -608,8 +614,7 @@ func (n *createTableNode) startExec(params runParams) error {
 				// indexes, partial, vector, or otherwise, to update.
 				var pm row.PartialIndexUpdateHelper
 				var vh row.VectorIndexUpdateHelper
-				var oth row.OriginTimestampCPutHelper
-				if err := ti.row(params.ctx, rowBuffer, pm, vh, oth, params.extendedEvalCtx.Tracing.KVTracingEnabled()); err != nil {
+				if err := ti.row(params.ctx, rowBuffer, pm, vh, params.extendedEvalCtx.Tracing.KVTracingEnabled()); err != nil {
 					return err
 				}
 			}
@@ -1415,7 +1420,8 @@ func NewTableDesc(
 	desc := tabledesc.InitTableDescriptor(
 		id, dbID, sc.GetID(), n.Table.Table(), creationTime, privileges, persistence,
 	)
-	setter := tablestorageparam.NewSetter(&desc, true /* isNewObject */)
+
+	setter := tablestorageparam.NewSetter(&desc)
 	if err := storageparam.Set(
 		ctx,
 		semaCtx,
@@ -1424,6 +1430,13 @@ func NewTableDesc(
 		setter,
 	); err != nil {
 		return nil, err
+	}
+
+	paramIsDelete := n.StorageParams.GetVal("ttl_delete_rate_limit") != nil
+	paramIsSelect := n.StorageParams.GetVal("ttl_select_rate_limit") != nil
+
+	if paramIsDelete || paramIsSelect {
+		printTTLRateLimitNotice(ctx, evalCtx.ClientNoticeSender)
 	}
 
 	setter.TableDesc.RowLevelTTL = setter.UpdatedRowLevelTTL
@@ -1964,11 +1977,7 @@ func NewTableDesc(
 				if err != nil {
 					return nil, err
 				}
-				opClass := columns[len(columns)-1].OpClass
-				idx.VecConfig, err = vecindex.MakeVecConfig(ctx, evalCtx, column.GetType(), opClass)
-				if err != nil {
-					return nil, err
-				}
+				idx.VecConfig = vecindex.MakeVecConfig(evalCtx, column.GetType())
 			}
 
 			var idxPartitionBy *tree.PartitionBy
@@ -2434,25 +2443,6 @@ func NewTableDesc(
 		return nil, err
 	}
 
-	// Check for a constraint used to look up values for the region column of a
-	// REGIONAL BY ROW table.
-	if n.Locality != nil && n.Locality.LocalityLevel == tree.LocalityLevelRow {
-		constraintID, ok, err := maybeGetRBRTableUsingConstraint(
-			ctx, semaCtx, evalCtx, &desc, n.StorageParams, n.Locality.RegionalByRowColumn,
-		)
-		if err != nil {
-			return nil, err
-		} else if ok {
-			desc.RBRUsingConstraint = constraintID
-		}
-	} else if n.StorageParams.GetVal(catpb.RBRUsingConstraintTableSettingName) != nil {
-		return nil, pgerror.Newf(
-			pgcode.InvalidParameterValue,
-			`storage parameter "%s" can only be set on REGIONAL BY ROW tables`,
-			catpb.RBRUsingConstraintTableSettingName,
-		)
-	}
-
 	if regionConfig != nil || n.Locality != nil {
 		localityTelemetryName := "unspecified"
 		if n.Locality != nil {
@@ -2564,25 +2554,14 @@ func newTableDesc(
 	// Row level TTL tables require a scheduled job to be created as well.
 	if ret.HasRowLevelTTL() {
 		ttl := ret.GetRowLevelTTL()
-		getAllNonDropColumnsFn := func() colinfo.ResultColumns {
-			return colinfo.ResultColumnsFromColumns(ret.GetID(), ret.NonDropColumns())
-		}
-		columnLookupByNameFn := func(columnName tree.Name) (exists, accessible, computed bool, id catid.ColumnID, typ *types.T) {
-			col, err := catalog.MustFindColumnByTreeName(ret, columnName)
-			if err != nil || col.Dropped() {
-				return false, false, false, 0, nil
-			}
-			return true, !col.IsInaccessible(), col.IsComputed(), col.GetID(), col.GetType()
-		}
-		if _, err := schemaexpr.ValidateTTLExpirationExpression(
-			params.ctx, params.p.SemaCtx(), &n.Table, ttl, params.ExecCfg().Settings.Version.ActiveVersionOrEmpty(params.ctx),
-			getAllNonDropColumnsFn, columnLookupByNameFn,
+		if err := schemaexpr.ValidateTTLExpirationExpression(
+			params.ctx, ret, params.p.SemaCtx(), &n.Table, ttl, params.ExecCfg().Settings.Version.ActiveVersionOrEmpty(params.ctx),
 		); err != nil {
 			return nil, err
 		}
 
 		params.p.Txn()
-		j, err := ttlinit.CreateRowLevelTTLScheduledJob(
+		j, err := CreateRowLevelTTLScheduledJob(
 			params.ctx,
 			params.ExecCfg().JobsKnobs(),
 			jobs.ScheduledJobTxn(params.p.InternalSQLTxn()),
@@ -2596,18 +2575,71 @@ func newTableDesc(
 		}
 		ttl.ScheduleID = j.ScheduleID()
 	}
+	return ret, nil
+}
 
-	// For tables set schema_locked by default if it hasn't been set, and we
-	// aren't running under an internal executor.
-	if !ret.IsView() && !ret.IsSequence() && !ret.IsTemporary() &&
-		n.StorageParams.GetVal("schema_locked") == nil &&
-		!params.p.SessionData().Internal &&
-		params.p.SessionData().CreateTableWithSchemaLocked &&
-		params.p.IsActive(params.ctx, clusterversion.V25_2) {
-		ret.SchemaLocked = true
+// newRowLevelTTLScheduledJob returns a *jobs.ScheduledJob for row level TTL
+// for a given table. newRowLevelTTLScheduledJob assumes that
+// tblDesc.RowLevelTTL is not nil.
+func newRowLevelTTLScheduledJob(
+	env scheduledjobs.JobSchedulerEnv,
+	owner username.SQLUsername,
+	tblDesc *tabledesc.Mutable,
+	clusterID uuid.UUID,
+	clusterVersion clusterversion.ClusterVersion,
+) (*jobs.ScheduledJob, error) {
+	sj := jobs.NewScheduledJob(env)
+	sj.SetScheduleLabel(ttlbase.BuildScheduleLabel(tblDesc))
+	sj.SetOwner(owner)
+	sj.SetScheduleDetails(jobspb.ScheduleDetails{
+		Wait: jobspb.ScheduleDetails_SKIP,
+		// If a job fails, try again at the allocated cron time.
+		OnError:                jobspb.ScheduleDetails_RETRY_SCHED,
+		ClusterID:              clusterID,
+		CreationClusterVersion: clusterVersion,
+	})
+
+	if err := sj.SetScheduleAndNextRun(tblDesc.RowLevelTTL.DeletionCronOrDefault()); err != nil {
+		return nil, err
+	}
+	args := &catpb.ScheduledRowLevelTTLArgs{
+		TableID: tblDesc.GetID(),
+	}
+	any, err := pbtypes.MarshalAny(args)
+	if err != nil {
+		return nil, err
+	}
+	sj.SetExecutionDetails(
+		tree.ScheduledRowLevelTTLExecutor.InternalName(),
+		jobspb.ExecutionArguments{Args: any},
+	)
+	return sj, nil
+}
+
+// CreateRowLevelTTLScheduledJob creates a new row-level TTL schedule.
+func CreateRowLevelTTLScheduledJob(
+	ctx context.Context,
+	knobs *jobs.TestingKnobs,
+	s jobs.ScheduledJobStorage,
+	owner username.SQLUsername,
+	tblDesc *tabledesc.Mutable,
+	clusterID uuid.UUID,
+	version clusterversion.ClusterVersion,
+) (*jobs.ScheduledJob, error) {
+	if !tblDesc.HasRowLevelTTL() {
+		return nil, errors.AssertionFailedf("CreateRowLevelTTLScheduledJob called with no .RowLevelTTL: %#v", tblDesc)
 	}
 
-	return ret, nil
+	telemetry.Inc(sqltelemetry.RowLevelTTLCreated)
+	env := JobSchedulerEnv(knobs)
+	j, err := newRowLevelTTLScheduledJob(env, owner, tblDesc, clusterID, version)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Create(ctx, j); err != nil {
+		return nil, err
+	}
+	return j, nil
 }
 
 func rowLevelTTLAutomaticColumnDef(ttl *catpb.RowLevelTTL) (*tree.ColumnTableDef, error) {
@@ -2801,9 +2833,6 @@ func replaceLikeTableOpts(n *tree.CreateTable, params runParams) (tree.TableDefs
 					elem := tree.IndexElem{
 						Column:    tree.Name(name),
 						Direction: tree.Ascending,
-					}
-					if !indexDef.Type.HasScannablePrefix() {
-						elem.Direction = tree.DefaultDirection
 					}
 					col, err := catalog.MustFindColumnByID(td, idx.GetKeyColumnID(j))
 					if err != nil {

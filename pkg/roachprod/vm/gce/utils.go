@@ -113,7 +113,6 @@ func writeStartupScript(
 	useMultiple bool,
 	enableFIPS bool,
 	enableCron bool,
-	bootDiskOnly bool,
 ) (string, error) {
 
 	// We define a local type in case we need to add more provider-specific params in
@@ -137,7 +136,6 @@ func writeStartupScript(
 			vm.WithChronyServers([]string{"metadata.google.internal"}),
 			vm.WithExtraMountOpts(extraMountOpts),
 			vm.WithUseMultipleDisks(useMultiple),
-			vm.WithBootDiskOnly(bootDiskOnly),
 		),
 		PublicKey: publicKey,
 	}
@@ -158,12 +156,12 @@ func writeStartupScript(
 
 // SyncDNS implements the InfraProvider interface.
 func (p *Provider) SyncDNS(l *logger.Logger, vms vm.List) error {
-	return p.dnsProvider.SyncDNS(l, vms)
+	return p.dnsProvider.syncPublicDNS(l, vms)
 }
 
 // DNSDomain implements the InfraProvider interface.
 func (p *Provider) DNSDomain() string {
-	return p.dnsProvider.PublicDomain()
+	return p.dnsProvider.publicDomain
 }
 
 type AuthorizedKey struct {

@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/geo/geopb"
@@ -235,13 +234,22 @@ func (w *walkCtx) walkType(typ catalog.TypeDescriptor) {
 	}
 }
 
-// GetSequenceOptions returns the non-default sequence options from descriptor
-// sequence options.
 func GetSequenceOptions(
 	sequenceID descpb.ID, opts *descpb.TableDescriptor_SequenceOpts,
 ) []*scpb.SequenceOption {
 	// Compute the default sequence options.
-	defaultOpts := schemaexpr.DefaultSequenceOptions()
+	defaultOpts := descpb.TableDescriptor_SequenceOpts{
+		Increment: 1,
+	}
+	err := schemaexpr.AssignSequenceOptions(&defaultOpts,
+		nil,
+		64,
+		true,
+		nil,
+	)
+	if err != nil {
+		panic(err)
+	}
 	var sequenceOptions []*scpb.SequenceOption
 	addSequenceOption := func(key string, defaultValue, value interface{}) {
 		// Nil or empty values can be skipped. Or values which
@@ -267,7 +275,7 @@ func GetSequenceOptions(
 	addSequenceOption(tree.SeqOptMaxValue, defaultOpts.MaxValue, opts.MaxValue)
 	addSequenceOption(tree.SeqOptStart, defaultOpts.Start, opts.Start)
 	addSequenceOption(tree.SeqOptVirtual, defaultOpts.Virtual, opts.Virtual)
-	addSequenceOption(tree.SeqOptCacheSession, defaultOpts.SessionCacheSize, opts.SessionCacheSize)
+	addSequenceOption(tree.SeqOptCache, defaultOpts.CacheSize, opts.CacheSize)
 	addSequenceOption(tree.SeqOptCacheNode, defaultOpts.NodeCacheSize, opts.NodeCacheSize)
 	addSequenceOption(tree.SeqOptAs, defaultOpts.AsIntegerType, opts.AsIntegerType)
 	return sequenceOptions
@@ -294,7 +302,6 @@ func (w *walkCtx) walkRelation(tbl catalog.TableDescriptor) {
 			ViewID:          tbl.GetID(),
 			UsesTypeIDs:     catalog.MakeDescriptorIDSet(tbl.GetDependsOnTypes()...).Ordered(),
 			UsesRelationIDs: catalog.MakeDescriptorIDSet(tbl.GetDependsOn()...).Ordered(),
-			UsesRoutineIDs:  catalog.MakeDescriptorIDSet(tbl.GetDependsOnFunctions()...).Ordered(),
 			IsTemporary:     tbl.IsTemporary(),
 			IsMaterialized:  tbl.MaterializedView(),
 			ForwardReferences: func(tbl catalog.TableDescriptor) []*scpb.View_Reference {
@@ -308,7 +315,7 @@ func (w *walkCtx) walkRelation(tbl catalog.TableDescriptor) {
 						panic(err)
 					}
 
-					err = toDesc.ForeachDependedOnBy(func(dep *descpb.TableDescriptor_Reference) error {
+					_ = toDesc.ForeachDependedOnBy(func(dep *descpb.TableDescriptor_Reference) error {
 						if dep.ID != tbl.GetID() {
 							return nil
 						}
@@ -329,9 +336,6 @@ func (w *walkCtx) walkRelation(tbl catalog.TableDescriptor) {
 						result = append(result, ref)
 						return nil
 					})
-					if err != nil {
-						panic(err)
-					}
 				}
 
 				return result
@@ -413,12 +417,10 @@ func (w *walkCtx) walkRelation(tbl catalog.TableDescriptor) {
 		w.walkPolicy(tbl, &policies[i])
 	}
 
-	if err := tbl.ForeachDependedOnBy(func(dep *descpb.TableDescriptor_Reference) error {
+	_ = tbl.ForeachDependedOnBy(func(dep *descpb.TableDescriptor_Reference) error {
 		w.backRefs.Add(dep.ID)
 		return nil
-	}); err != nil {
-		panic(err)
-	}
+	})
 	for _, fk := range tbl.InboundForeignKeys() {
 		w.backRefs.Add(fk.GetOriginTableID())
 	}
@@ -479,36 +481,6 @@ func (w *walkCtx) walkRelation(tbl catalog.TableDescriptor) {
 			JobIDs:  tbl.TableDesc().LDRJobIDs,
 		})
 	}
-	w.walkStorageParams(tbl)
-}
-
-// walkStorageParams walks through table storage parameters and creates
-// TableStorageParam elements for each non-null parameter.
-func (w *walkCtx) walkStorageParams(tbl catalog.TableDescriptor) {
-	tableID := tbl.GetID()
-	storageParams, err := tbl.GetStorageParams(false)
-	if err != nil {
-		panic(err)
-	}
-	for _, param := range storageParams {
-		key, value, found := strings.Cut(param, "=")
-		if !found {
-			continue
-		}
-		if key == "schema_locked" {
-			// schema_locked is handled separately via the TableSchemaLocked element.
-			continue
-		}
-		if strings.HasPrefix(key, "ttl") {
-			// ttl parameters are handled separately via the RowLevelTTL element.
-			continue
-		}
-		w.ev(scpb.Status_PUBLIC, &scpb.TableStorageParam{
-			TableID: tableID,
-			Name:    key,
-			Value:   value,
-		})
-	}
 }
 
 func (w *walkCtx) walkLocality(tbl catalog.TableDescriptor, l *catpb.LocalityConfig) {
@@ -526,12 +498,6 @@ func (w *walkCtx) walkLocality(tbl catalog.TableDescriptor, l *catpb.LocalityCon
 			TableID: tbl.GetID(),
 			As:      as,
 		})
-		if fkID := tbl.GetRegionalByRowUsingConstraint(); fkID != descpb.ConstraintID(0) {
-			w.ev(scpb.Status_PUBLIC, &scpb.TableLocalityRegionalByRowUsingConstraint{
-				TableID:      tbl.GetID(),
-				ConstraintID: fkID,
-			})
-		}
 	} else if rbt := l.GetRegionalByTable(); rbt != nil {
 		if rgn := rbt.Region; rgn != nil {
 			parent := w.lookupFn(tbl.GetParentID())
@@ -565,6 +531,7 @@ func (w *walkCtx) walkColumn(tbl catalog.TableDescriptor, col catalog.Column) {
 	column := &scpb.Column{
 		TableID:                           tbl.GetID(),
 		ColumnID:                          col.GetID(),
+		IsHidden:                          col.IsHidden(),
 		IsInaccessible:                    col.IsInaccessible(),
 		GeneratedAsIdentityType:           col.GetGeneratedAsIdentityType(),
 		GeneratedAsIdentitySequenceOption: col.GetGeneratedAsIdentitySequenceOptionStr(),
@@ -584,6 +551,7 @@ func (w *walkCtx) walkColumn(tbl catalog.TableDescriptor, col catalog.Column) {
 		columnType := &scpb.ColumnType{
 			TableID:                 tbl.GetID(),
 			ColumnID:                col.GetID(),
+			IsNullable:              col.IsNullable(),
 			IsVirtual:               col.IsVirtual(),
 			ElementCreationMetadata: NewElementCreationMetadata(w.clusterVersion),
 		}
@@ -601,43 +569,17 @@ func (w *walkCtx) walkColumn(tbl catalog.TableDescriptor, col catalog.Column) {
 			expr, err := w.newExpression(col.GetComputeExpr())
 			onErrPanic(err)
 
-			w.ev(scpb.Status_PUBLIC, &scpb.ColumnComputeExpression{
-				TableID:    tbl.GetID(),
-				ColumnID:   col.GetID(),
-				Expression: *expr,
-			})
-		}
-
-		if columnType.ElementCreationMetadata.In_26_1OrLater {
-			if col.IsGeneratedAsIdentity() {
-				w.ev(scpb.Status_PUBLIC,
-					&scpb.ColumnGeneratedAsIdentity{
-						TableID:        tbl.GetID(),
-						ColumnID:       col.GetID(),
-						Type:           col.GetGeneratedAsIdentityType(),
-						SequenceOption: col.GetGeneratedAsIdentitySequenceOptionStr(),
-					})
-				column.GeneratedAsIdentityType = catpb.GeneratedAsIdentityType_NOT_IDENTITY_COLUMN
-				column.GeneratedAsIdentitySequenceOption = ""
+			if columnType.ElementCreationMetadata.In_24_3OrLater {
+				w.ev(scpb.Status_PUBLIC, &scpb.ColumnComputeExpression{
+					TableID:    tbl.GetID(),
+					ColumnID:   col.GetID(),
+					Expression: *expr,
+				})
+			} else {
+				columnType.ComputeExpr = expr
 			}
-		} else {
-			column.GeneratedAsIdentityType = col.GetGeneratedAsIdentityType()
-			column.GeneratedAsIdentitySequenceOption = col.GetGeneratedAsIdentitySequenceOptionStr()
 		}
 		w.ev(scpb.Status_PUBLIC, columnType)
-
-		if col.IsHidden() {
-			if columnType.ElementCreationMetadata.In_26_1OrLater {
-				columnHidden := scpb.ColumnHidden{
-					TableID:  tbl.GetID(),
-					ColumnID: col.GetID(),
-				}
-				w.ev(scpb.Status_PUBLIC, &columnHidden)
-			} else {
-				column.IsHidden = true
-			}
-		}
-
 	}
 	if !col.IsNullable() {
 		w.ev(scpb.Status_PUBLIC, &scpb.ColumnNotNull{
@@ -936,45 +878,12 @@ func (w *walkCtx) walkTrigger(tbl catalog.TableDescriptor, t *descpb.TriggerDesc
 		FuncArgs:  t.FuncArgs,
 	})
 	w.ev(scpb.Status_PUBLIC, &scpb.TriggerDeps{
-		TableID:        tbl.GetID(),
-		TriggerID:      t.ID,
-		UsesRelations:  w.buildTriggerRelationDependencies(tbl, t),
-		UsesTypeIDs:    t.DependsOnTypes,
-		UsesRoutineIDs: t.DependsOnRoutines,
+		TableID:         tbl.GetID(),
+		TriggerID:       t.ID,
+		UsesRelationIDs: t.DependsOn,
+		UsesTypeIDs:     t.DependsOnTypes,
+		UsesRoutineIDs:  t.DependsOnRoutines,
 	})
-}
-
-func (w *walkCtx) buildTriggerRelationDependencies(
-	tbl catalog.TableDescriptor, t *descpb.TriggerDescriptor,
-) []scpb.TriggerDeps_RelationReference {
-	usesRelations := make([]scpb.TriggerDeps_RelationReference, 0)
-	for _, id := range t.DependsOn {
-		foundRelation := false
-		to := w.lookupFn(id)
-		toDesc, err := catalog.AsTableDescriptor(to)
-		if err != nil {
-			panic(err)
-		}
-		err = toDesc.ForeachDependedOnBy(func(dep *descpb.TableDescriptor_Reference) error {
-			if dep.ID != tbl.GetID() {
-				return nil
-			}
-			usesRelations = append(usesRelations, scpb.TriggerDeps_RelationReference{
-				ID:        id,
-				IndexID:   dep.IndexID,
-				ColumnIDs: dep.ColumnIDs,
-			})
-			foundRelation = true
-			return nil
-		})
-		if err != nil {
-			panic(err)
-		}
-		if !foundRelation {
-			panic(errors.AssertionFailedf("could not find back-reference to relation %d", id))
-		}
-	}
-	return usesRelations
 }
 
 func (w *walkCtx) walkPolicy(tbl catalog.TableDescriptor, p *descpb.PolicyDescriptor) {
@@ -1074,11 +983,10 @@ func (w *walkCtx) walkForeignKeyConstraint(
 func (w *walkCtx) walkFunction(fnDesc catalog.FunctionDescriptor) {
 	typeT := newTypeT(fnDesc.GetReturnType().Type)
 	fn := &scpb.Function{
-		FunctionID:  fnDesc.GetID(),
-		ReturnSet:   fnDesc.GetReturnType().ReturnSet,
-		ReturnType:  *typeT,
-		Params:      make([]scpb.Function_Parameter, len(fnDesc.GetParams())),
-		IsProcedure: fnDesc.IsProcedure(),
+		FunctionID: fnDesc.GetID(),
+		ReturnSet:  fnDesc.GetReturnType().ReturnSet,
+		ReturnType: *typeT,
+		Params:     make([]scpb.Function_Parameter, len(fnDesc.GetParams())),
 	}
 	for i, param := range fnDesc.GetParams() {
 		typeT := newTypeT(param.Type)

@@ -335,8 +335,6 @@ func (b *Builder) buildView(
 		if !ok {
 			panic(errors.AssertionFailedf("expected SELECT statement"))
 		}
-		// TODO(michae2): We should be checking the statement hints cache here to
-		// find any external statement hints that could apply to the view statement.
 
 		b.views[view] = sel
 
@@ -353,10 +351,13 @@ func (b *Builder) buildView(
 		b.skipSelectPrivilegeChecks = true
 		defer func() { b.skipSelectPrivilegeChecks = false }()
 	}
-	// We are only interested in the direct dependency on this view descriptor.
-	// Any further dependency by the view's query should not be tracked.
-	trackViewDep := b.trackSchemaDeps
-	defer b.DisableSchemaDepTracking()()
+	trackDeps := b.trackSchemaDeps
+	if trackDeps {
+		// We are only interested in the direct dependency on this view descriptor.
+		// Any further dependency by the view's query should not be tracked.
+		b.trackSchemaDeps = false
+		defer func() { b.trackSchemaDeps = true }()
+	}
 
 	// We don't want the view to be able to refer to any outer scopes in the
 	// query. This shouldn't happen if the view is valid but there may be
@@ -379,7 +380,7 @@ func (b *Builder) buildView(
 		}
 	}
 
-	if trackViewDep && !view.IsSystemView() {
+	if trackDeps && !view.IsSystemView() {
 		dep := opt.SchemaDep{DataSource: view}
 		for i := range outScope.cols {
 			dep.ColumnOrdinals.Add(i)
@@ -804,7 +805,12 @@ func (b *Builder) addCheckConstraintsForTable(tabMeta *opt.TableMeta) {
 	// track view deps here, or else a view depending on a table with a
 	// column that is a UDT will result in a type dependency being added
 	// between the view and the UDT, even if the view does not use that column.
-	defer b.DisableSchemaDepTracking()()
+	if b.trackSchemaDeps {
+		b.trackSchemaDeps = false
+		defer func() {
+			b.trackSchemaDeps = true
+		}()
+	}
 	tab := tabMeta.Table
 
 	// Check if we have any validated check constraints. Only validated
@@ -822,7 +828,7 @@ func (b *Builder) addCheckConstraintsForTable(tabMeta *opt.TableMeta) {
 
 	// Create a scope that can be used for building the scalar expressions.
 	tableScope := b.allocScope()
-	b.appendOrdinaryColumnsFromTable(tableScope, tabMeta, &tabMeta.Alias)
+	tableScope.appendOrdinaryColumnsFromTable(tabMeta, &tabMeta.Alias)
 	// Synthesized CHECK expressions, e.g., for columns of ENUM types, may
 	// reference inaccessible columns. This can happen when the type of an
 	// indexed expression is an ENUM. We make these columns visible so that they
@@ -890,11 +896,16 @@ func (b *Builder) addCheckConstraintsForTable(tabMeta *opt.TableMeta) {
 func (b *Builder) addComputedColsForTable(
 	tabMeta *opt.TableMeta, includeVirtualMutationColOrds intsets.Fast,
 ) {
-	// We do not want to track view/routine deps here, otherwise a view/routine
-	// depending on a table with a computed column of a UDT will result in a
-	// type dependency being added between the view/routine and the UDT,
-	// even if the view/routine does not use that column.
-	defer b.DisableSchemaDepTracking()()
+	// We do not want to track view deps here, otherwise a view depending
+	// on a table with a computed column of a UDT will result in a
+	// type dependency being added between the view and the UDT,
+	// even if the view does not use that column.
+	if b.trackSchemaDeps {
+		b.trackSchemaDeps = false
+		defer func() {
+			b.trackSchemaDeps = true
+		}()
+	}
 	var tableScope *scope
 	tab := tabMeta.Table
 	for i, n := 0, tab.ColumnCount(); i < n; i++ {
@@ -914,7 +925,7 @@ func (b *Builder) addComputedColsForTable(
 
 		if tableScope == nil {
 			tableScope = b.allocScope()
-			b.appendOrdinaryColumnsFromTable(tableScope, tabMeta, &tabMeta.Alias)
+			tableScope.appendOrdinaryColumnsFromTable(tabMeta, &tabMeta.Alias)
 		}
 
 		colType := tabCol.DatumType()

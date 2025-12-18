@@ -57,5 +57,5 @@ func makeExternalConnectionKMS(
 }
 
 func init() {
-	cloud.RegisterKMSFromURIFactory(makeExternalConnectionKMS, Scheme)
+	cloud.RegisterKMSFromURIFactory(makeExternalConnectionKMS, scheme)
 }

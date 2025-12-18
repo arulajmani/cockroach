@@ -107,13 +107,10 @@ var restoreCompactedBackups = settings.RegisterBoolSetting(
 func maybeFilterMissingViews(
 	tablesByID map[descpb.ID]*tabledesc.Mutable,
 	typesByID map[descpb.ID]*typedesc.Mutable,
-	functionsByID map[descpb.ID]*funcdesc.Mutable,
 	skipMissingViews bool,
-	skipMissingUDFs bool,
 ) (map[descpb.ID]*tabledesc.Mutable, error) {
 	// Function that recursively determines whether a given table, if it is a
 	// view, has valid dependencies. Dependencies are looked up in tablesByID.
-	missingOnlyFunctionDeps := true
 	var hasValidViewDependencies func(desc *tabledesc.Mutable) bool
 	hasValidViewDependencies = func(desc *tabledesc.Mutable) bool {
 		if !desc.IsView() {
@@ -121,18 +118,11 @@ func maybeFilterMissingViews(
 		}
 		for _, id := range desc.DependsOn {
 			if depDesc, ok := tablesByID[id]; !ok || !hasValidViewDependencies(depDesc) {
-				missingOnlyFunctionDeps = false
 				return false
 			}
 		}
 		for _, id := range desc.DependsOnTypes {
 			if _, ok := typesByID[id]; !ok {
-				missingOnlyFunctionDeps = false
-				return false
-			}
-		}
-		for _, id := range desc.DependsOnFunctions {
-			if _, ok := functionsByID[id]; !ok {
 				return false
 			}
 		}
@@ -145,12 +135,8 @@ func maybeFilterMissingViews(
 			filteredTablesByID[id] = table
 		} else {
 			if !skipMissingViews {
-				if skipMissingUDFs && missingOnlyFunctionDeps {
-					// Skip this view since only function dependencies are missing.
-					continue
-				}
 				return nil, errors.Errorf(
-					"cannot restore view %q without restoring referenced object (or %q option)",
+					"cannot restore view %q without restoring referenced table (or %q option)",
 					table.Name, restoreOptSkipMissingViews,
 				)
 			}
@@ -1289,9 +1275,20 @@ func restorePlanHook(
 		}
 	}
 
-	subdir, err := exprEval.String(ctx, restoreStmt.Subdir)
-	if err != nil {
-		return nil, nil, false, err
+	var subdir string
+	if restoreStmt.Subdir != nil {
+		var err error
+		subdir, err = exprEval.String(ctx, restoreStmt.Subdir)
+		if err != nil {
+			return nil, nil, false, err
+		}
+	} else {
+		// Deprecation notice for non-collection `RESTORE FROM` syntax. Remove this
+		// once the syntax is deleted in 22.2.
+		p.BufferClientNotice(ctx,
+			pgnotice.Newf("The `RESTORE FROM <backup>` syntax will be removed in a future release, please"+
+				" switch over to using `RESTORE FROM <backup> IN <collection>` to restore a particular backup from a collection: %s",
+				"https://www.cockroachlabs.com/docs/stable/restore.html#view-the-backup-subdirectories"))
 	}
 
 	var incStorage []string
@@ -1686,23 +1683,9 @@ func doRestorePlan(
 
 	var fullyResolvedSubdir string
 
-	if restoreStmt.Options.OnlineImpl() {
-		// validate that from uris are allowed in online restore
-		for _, path := range from {
-			if err := uriCompatibleWithOnlineRestore(ctx, p.InternalSQLTxn(), path); err != nil {
-				return err
-			}
-		}
-	}
-
-	defaultCollectionURI, _, err := backupdest.GetURIsByLocalityKV(from, "")
-	if err != nil {
-		return err
-	}
-
 	if strings.EqualFold(subdir, backupbase.LatestFileName) {
 		// set subdir to content of latest file
-		latest, err := backupdest.ReadLatestFile(ctx, defaultCollectionURI,
+		latest, err := backupdest.ReadLatestFile(ctx, from[0],
 			p.ExecCfg().DistSQLSrv.ExternalStorageFromURI, p.User())
 		if err != nil {
 			return err
@@ -1727,7 +1710,7 @@ func doRestorePlan(
 	)
 	if err != nil {
 		if errors.Is(err, cloud.ErrListingUnsupported) {
-			log.Dev.Warningf(ctx, "storage sink %v does not support listing, only resolving the base backup", incFrom)
+			log.Warningf(ctx, "storage sink %v does not support listing, only resolving the base backup", incFrom)
 		} else {
 			return err
 		}
@@ -1747,7 +1730,18 @@ func doRestorePlan(
 	}
 	defer func() {
 		if err := cleanupFn(); err != nil {
-			log.Dev.Warningf(ctx, "failed to close base store: %+v", err)
+			log.Warningf(ctx, "failed to close incremental store: %+v", err)
+		}
+	}()
+
+	incStores, cleanupFn, err := backupdest.MakeBackupDestinationStores(ctx, p.User(), mkStore,
+		fullyResolvedIncrementalsDirectory)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := cleanupFn(); err != nil {
+			log.Warningf(ctx, "failed to close incremental store: %+v", err)
 		}
 	}()
 
@@ -1803,12 +1797,19 @@ func doRestorePlan(
 	// directories, return the URIs and manifests of all backup layers in all
 	// localities. Incrementals will be searched for automatically.
 	defaultURIs, mainBackupManifests, localityInfo, memReserved, err := backupdest.ResolveBackupManifests(
-		ctx, p.ExecCfg(), &mem, defaultCollectionURI, from, mkStore,
-		fullyResolvedSubdir, fullyResolvedBaseDirectory, fullyResolvedIncrementalsDirectory, endTime,
-		encryption, &kmsEnv, p.User(), false, includeCompacted, len(incFrom) > 0,
+		ctx, &mem, baseStores, incStores, mkStore, fullyResolvedBaseDirectory,
+		fullyResolvedIncrementalsDirectory, endTime, encryption, &kmsEnv,
+		p.User(), false, includeCompacted,
 	)
 	if err != nil {
 		return err
+	}
+	if restoreStmt.Options.OnlineImpl() {
+		for _, uri := range defaultURIs {
+			if err := cloud.SchemeSupportsEarlyBoot(uri); err != nil {
+				return errors.Wrap(err, "backup URI not supported for online restore")
+			}
+		}
 	}
 
 	defer func() {
@@ -1955,13 +1956,15 @@ func doRestorePlan(
 		}
 	}
 
+	var asOfInterval int64
+	if !endTime.IsEmpty() {
+		asOfInterval = endTime.WallTime - p.ExtendedEvalContext().StmtTimestamp.UnixNano()
+	}
+
 	filteredTablesByID, err := maybeFilterMissingViews(
 		tablesByID,
 		typesByID,
-		functionsByID,
-		restoreStmt.Options.SkipMissingViews,
-		restoreStmt.Options.SkipMissingUDFs,
-	)
+		restoreStmt.Options.SkipMissingViews)
 	if err != nil {
 		return err
 	}
@@ -2052,9 +2055,7 @@ func doRestorePlan(
 	if newDBName != "" {
 		overrideDBName = newDBName
 	}
-	var typeBackrefsToRemove map[descpb.ID]map[descpb.ID]struct{}
-	typeBackrefsToRemove, err = rewrite.TableDescs(tables, descriptorRewrites, overrideDBName)
-	if err != nil {
+	if err := rewrite.TableDescs(tables, descriptorRewrites, overrideDBName); err != nil {
 		return errors.Wrapf(err, "table descriptor rewrite failed")
 	}
 	if err := rewrite.DatabaseDescs(databases, descriptorRewrites, map[descpb.ID]struct{}{}); err != nil {
@@ -2063,7 +2064,7 @@ func doRestorePlan(
 	if err := rewrite.SchemaDescs(schemas, descriptorRewrites); err != nil {
 		return errors.Wrapf(err, "schema descriptor rewrite failed")
 	}
-	if err := rewrite.TypeDescs(types, descriptorRewrites, typeBackrefsToRemove); err != nil {
+	if err := rewrite.TypeDescs(types, descriptorRewrites); err != nil {
 		return errors.Wrapf(err, "type descriptor rewrite failed")
 	}
 	if err := rewrite.FunctionDescs(functions, descriptorRewrites, overrideDBName); err != nil {
@@ -2130,7 +2131,7 @@ func doRestorePlan(
 		}
 		resultsCh <- tree.Datums{tree.NewDInt(tree.DInt(jobID))}
 		collectRestoreTelemetry(ctx, jobID, restoreDetails, intoDB, newDBName, subdir, restoreStmt,
-			descsByTablePattern, restoreDBs, p.SessionData().ApplicationName)
+			descsByTablePattern, restoreDBs, asOfInterval, p.SessionData().ApplicationName)
 		return nil
 	}
 
@@ -2147,7 +2148,7 @@ func doRestorePlan(
 				return
 			}
 			if cleanupErr := sj.CleanupOnRollback(ctx); cleanupErr != nil {
-				log.Dev.Errorf(ctx, "failed to cleanup job: %v", cleanupErr)
+				log.Errorf(ctx, "failed to cleanup job: %v", cleanupErr)
 			}
 		}()
 		jobID := p.ExecCfg().JobRegistry.MakeJobID()
@@ -2177,7 +2178,7 @@ func doRestorePlan(
 	// execution.
 	p.InternalSQLTxn().Descriptors().ReleaseAll(ctx)
 	collectRestoreTelemetry(ctx, sj.ID(), restoreDetails, intoDB, newDBName, subdir, restoreStmt,
-		descsByTablePattern, restoreDBs, p.SessionData().ApplicationName)
+		descsByTablePattern, restoreDBs, asOfInterval, p.SessionData().ApplicationName)
 	if err := sj.Start(ctx); err != nil {
 		return err
 	}
@@ -2197,13 +2198,20 @@ func collectRestoreTelemetry(
 	restoreStmt *tree.Restore,
 	descsByTablePattern map[tree.TablePattern]catalog.Descriptor,
 	restoreDBs []catalog.DatabaseDescriptor,
+	asOfInterval int64,
 	applicationName string,
 ) {
 	telemetry.Count("restore.total.started")
 	if restoreStmt.DescriptorCoverage == tree.AllDescriptors {
 		telemetry.Count("restore.full-cluster")
 	}
-	logRestoreTelemetry(ctx, jobID, details, intoDB, newDBName, subdir, restoreStmt.Options,
+	if restoreStmt.Subdir == nil {
+		telemetry.Count("restore.deprecated-subdir-syntax")
+	} else {
+		telemetry.Count("restore.collection")
+	}
+
+	logRestoreTelemetry(ctx, jobID, details, intoDB, newDBName, subdir, asOfInterval, restoreStmt.Options,
 		descsByTablePattern, restoreDBs, applicationName)
 }
 
