@@ -12,13 +12,11 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/keys"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/concurrency/lock"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvstorage"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/logstore"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/print"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/rditer"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/stateloader"
 	"github.com/cockroachdb/cockroach/pkg/raft/raftpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage"
@@ -78,14 +76,15 @@ func TestPrepareSnapApply(t *testing.T) {
 	createRangeData(t, eng, *descA)
 	createRangeData(t, eng, *descB)
 
-	sl := kvstorage.MakeStateLoader(id.RangeID)
+	sl := stateloader.Make(id.RangeID)
 	ctx := context.Background()
 	require.NoError(t, sl.SetRaftReplicaID(ctx, eng, id.ReplicaID))
 	for _, rID := range []roachpb.RangeID{101, 102} {
-		require.NoError(t, kvstorage.MakeStateLoader(rID).SetRaftReplicaID(ctx, eng, replicaID))
+		require.NoError(t, stateloader.Make(rID).SetRaftReplicaID(ctx, eng, replicaID))
 	}
 
 	swb := snapWriteBuilder{
+		id:       id,
 		todoEng:  eng,
 		sl:       sl,
 		writeSST: writeSST,
@@ -94,22 +93,20 @@ func TestPrepareSnapApply(t *testing.T) {
 		hardState:  raftpb.HardState{Term: 20, Commit: 100},
 		desc:       desc(id.RangeID, "a", "k"),
 		origDesc:   desc(id.RangeID, "a", "k"),
-		subsume: []kvstorage.DestroyReplicaInfo{
-			{FullReplicaID: roachpb.FullReplicaID{RangeID: descA.RangeID, ReplicaID: replicaID}, Keys: descA.RSpan()},
-			{FullReplicaID: roachpb.FullReplicaID{RangeID: descB.RangeID, ReplicaID: replicaID}, Keys: descB.RSpan()},
+		subsume: []destroyReplicaInfo{
+			{id: roachpb.FullReplicaID{RangeID: descA.RangeID, ReplicaID: replicaID}, desc: descA},
+			{id: roachpb.FullReplicaID{RangeID: descB.RangeID, ReplicaID: replicaID}, desc: descB},
 		},
 	}
 
-	require.NoError(t, swb.prepareSnapApply(ctx))
+	err := swb.prepareSnapApply(ctx)
+	require.NoError(t, err)
 
-	// The snapshot construction code is spread across MultiSSTWriter and
-	// snapWriteBuilder. We only test the latter here, but for information also
-	// print the replicated spans that MultiSSTWriter generates SSTs for.
-	//
-	// TODO(pav-kv): check a few invariants, such as that all SSTs don't overlap,
-	// including with the replicated spans generated here.
 	for _, span := range rditer.MakeReplicatedKeySpans(swb.desc) {
 		sb.Printf(">> repl: %v\n", span)
+	}
+	for _, span := range swb.cleared {
+		sb.Printf(">> cleared: %v\n", span)
 	}
 	sb.Printf(">> excise: %v\n", swb.desc.KeySpan().AsRawSpanWithNoLocals())
 
@@ -132,25 +129,5 @@ func createRangeData(t *testing.T, eng storage.Engine, desc roachpb.RangeDescrip
 			Key: k, Strength: lock.Intent, TxnUUID: uuid.UUID{},
 		}.ToEngineKey(nil)
 		require.NoError(t, eng.PutEngineKey(ek, nil))
-	}
-
-	// Add some raft state: HardState, TruncatedState and log entries.
-	const truncIndex, numEntries = 10, 3
-	ctx := context.Background()
-
-	sl := logstore.NewStateLoader(desc.RangeID)
-	require.NoError(t, sl.SetRaftTruncatedState(
-		ctx, eng, &kvserverpb.RaftTruncatedState{Index: truncIndex, Term: 5},
-	))
-	require.NoError(t, sl.SetHardState(
-		ctx, eng, raftpb.HardState{Term: 6, Commit: truncIndex + numEntries},
-	))
-	for i := truncIndex + 1; i <= truncIndex+numEntries; i++ {
-		require.NoError(t, storage.MVCCBlindPutProto(
-			ctx, eng,
-			sl.RaftLogKey(kvpb.RaftIndex(i)), hlc.Timestamp{},
-			&raftpb.Entry{Index: uint64(i), Term: 6},
-			storage.MVCCWriteOptions{},
-		))
 	}
 }

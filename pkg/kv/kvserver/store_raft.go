@@ -25,10 +25,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
-	"github.com/cockroachdb/cockroach/pkg/util/taskpacer"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/tracing"
-	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/errors"
 )
 
@@ -209,7 +207,7 @@ func (qs *raftReceiveQueues) SetEnforceMaxLen(enforceMaxLen bool) {
 }
 
 // raftTickPacerConf is a configuration struct for the raft tick pacer.
-// It implements the taskpacer.Config interface.
+// It implements the taskPacerConfig interface.
 type raftTickPacerConf struct {
 	store *Store
 }
@@ -218,11 +216,11 @@ func newRaftTickPacerConf(s *Store) raftTickPacerConf {
 	return raftTickPacerConf{store: s}
 }
 
-func (r raftTickPacerConf) GetRefresh() time.Duration {
+func (r raftTickPacerConf) getRefresh() time.Duration {
 	return r.store.cfg.RaftTickInterval
 }
 
-func (r raftTickPacerConf) GetSmear() time.Duration {
+func (r raftTickPacerConf) getSmear() time.Duration {
 	return r.store.cfg.RaftTickSmearInterval
 }
 
@@ -821,21 +819,6 @@ func (s *Store) processRACv2RangeController(ctx context.Context, rangeID roachpb
 // down. Those instances should be rare, however, and we expect the newly live
 // node to eventually unquiesce the range.
 func (s *Store) nodeIsLiveCallback(l livenesspb.Liveness) {
-	if fn := s.cfg.TestingKnobs.NodeIsLiveCallbackInvoked; fn != nil {
-		defer fn(l)
-	}
-
-	// If there are no epoch based leases in the system (leader leases are
-	// enabled and Raft fortification is enabled for all ranges), we do not need
-	// to attempt to unquiesce any replicas -- there can't be any. This allows
-	// us to eschew some expensive iteration, see
-	// https://github.com/cockroachdb/cockroach/issues/157089.
-	leaderLeasesEnabled := LeaderLeasesEnabled.Get(&s.ClusterSettings().SV)
-	fortificationFrac := RaftLeaderFortificationFractionEnabled.Get(&s.ClusterSettings().SV)
-	if leaderLeasesEnabled && fortificationFrac == 1.0 {
-		return
-	}
-
 	ctx := context.TODO()
 	s.updateLivenessMap()
 
@@ -849,28 +832,6 @@ func (s *Store) nodeIsLiveCallback(l livenesspb.Liveness) {
 		}
 		return true
 	})
-
-	if fn := s.cfg.TestingKnobs.NodeIsLiveCallbackWorkDone; fn != nil {
-		fn(l)
-	}
-}
-
-// registerNodeIsLiveCallbackSettingsChange registers callbacks on the
-// LeaderLeasesEnabled and RaftLeaderFortificationFractionEnabled settings. When
-// these settings change such that we can no longer bypassing the expensive
-// nodeIsLiveCallback work, we invoke the callback for all live nodes to ensure
-// quiesced ranges are promptly unquiesced, if necessary.
-func (s *Store) registerNodeIsLiveCallbackSettingsChange(ctx context.Context) {
-	invokeCallbackForAllLiveNodes := func(ctx context.Context) {
-		for _, entry := range s.cfg.NodeLiveness.ScanNodeVitalityFromCache() {
-			if entry.IsLive(livenesspb.IsAliveNotification) {
-				s.nodeIsLiveCallback(entry.GetInternalLiveness())
-			}
-		}
-	}
-
-	LeaderLeasesEnabled.SetOnChange(&s.ClusterSettings().SV, invokeCallbackForAllLiveNodes)
-	RaftLeaderFortificationFractionEnabled.SetOnChange(&s.ClusterSettings().SV, invokeCallbackForAllLiveNodes)
 }
 
 // supportWithdrawnCallback is called every time the local store withdraws
@@ -958,24 +919,24 @@ func (s *Store) raftTickLoop(ctx context.Context) {
 	defer timer.Stop()
 	// waitUntil is used to wait between different tick batches to pace the
 	// ticking process over the entire tick interval.
-	waitUntil := func(until crtime.Mono) {
-		wait := until.Sub(crtime.NowMono())
-		if wait <= 0 {
+	waitUntil := func(until time.Time) {
+		now := timeutil.Now()
+		if !now.Before(until) {
 			return
 		}
-		timer.Reset(wait)
+		timer.Reset(until.Sub(now))
 		<-timer.C
 	}
 
 	// Create a config that will be used by the taskPacer, which allows us to pace
 	// the enqueuing of Raft ticks.
 	conf := newRaftTickPacerConf(s)
-	pacer := taskpacer.New(conf)
+	pacer := NewTaskPacer(conf)
 
 	for {
 		select {
 		case <-ticker.C:
-			now := crtime.NowMono()
+			now := timeutil.Now()
 			pacer.StartTask(now)
 			// Update the liveness map.
 			if s.cfg.NodeLiveness != nil {
@@ -1006,7 +967,7 @@ func (s *Store) raftTickLoop(ctx context.Context) {
 			// are ticked, which can lead to increased goroutine scheduling latency.
 			for startAt := now; len(rangeIDs) != 0; {
 				waitUntil(startAt)
-				todo, by := pacer.Pace(crtime.NowMono(), len(rangeIDs))
+				todo, by := pacer.Pace(timeutil.Now(), len(rangeIDs))
 				batch := s.scheduler.NewEnqueueBatch()
 				for _, id := range rangeIDs[:todo] {
 					batch.Add(id)

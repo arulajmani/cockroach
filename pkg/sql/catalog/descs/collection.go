@@ -39,7 +39,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/iterutil"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/errors"
 )
 
@@ -124,10 +123,6 @@ type Collection struct {
 	// repairs.
 	skipValidationOnWrite bool
 
-	// waitForLockedLeaseBump indicates that we need to wait for the locked
-	// lease timestamp to bump as well.
-	waitForLockedLeaseBump bool
-
 	// readerCatalogSetup indicates that replicated descriptors can be modified
 	// by this collection.
 	readerCatalogSetup bool
@@ -194,18 +189,6 @@ func (tc *Collection) SkipValidationOnWrite() {
 	tc.skipValidationOnWrite = true
 }
 
-// MaybeSetLockedLeaseBump requires that the locked lease timestamp
-// is also bumped after this operation. This is needed in scenarios
-// where WaitForOneVersion has no prior version checked out, and the
-// previous version is invalid (i.e. has validation errors).
-func (tc *Collection) MaybeSetLockedLeaseBump(ctx context.Context) {
-	if !lease.LockedLeaseTimestamp.Get(&tc.settings.SV) ||
-		!tc.settings.Version.IsActive(ctx, clusterversion.V26_1) {
-		return
-	}
-	tc.waitForLockedLeaseBump = true
-}
-
 // SetReaderCatalogSetup indicates this collection is being used to
 // modify reader catalogs.
 func (tc *Collection) SetReaderCatalogSetup() {
@@ -216,29 +199,6 @@ func (tc *Collection) SetReaderCatalogSetup() {
 // the passed slice. Errors are logged but ignored.
 func (tc *Collection) ReleaseSpecifiedLeases(ctx context.Context, descs []lease.IDVersion) {
 	tc.leased.release(ctx, descs)
-}
-
-// MaybeWaitForLeaseTimestampBump waits for any lease timestamp bump, which
-// is normally used by repair queries to ensure the new version is available.
-// Normally for schema changes WaitForOneVersion is enough, since it guarantees
-// no one can lease the old version. However, if the prior version was invalid,
-// then there will be a delay after which the new version will be usable, as the
-// locked lease timestamp gets bumped.
-func (tc *Collection) MaybeWaitForLeaseTimestampBump(
-	ctx context.Context, commitTime hlc.Timestamp,
-) {
-	// This transaction does not require any leased timestamp bump.
-	if !tc.waitForLockedLeaseBump {
-		return
-	}
-	// Confirm the lease manager is leasing out any new descriptor versions
-	// at the commit time.
-	r := retry.StartWithCtx(ctx, retry.Options{})
-	for r.Next() {
-		if !tc.leased.lm.GetSafeReplicationTS().Less(commitTime) {
-			break
-		}
-	}
 }
 
 // ReleaseLeases releases all leases. Errors are logged but ignored.
@@ -256,13 +216,6 @@ func (tc *Collection) ReleaseAll(ctx context.Context) {
 	tc.ResetUncommitted(ctx)
 	tc.cr.Reset(ctx)
 	tc.skipValidationOnWrite = false
-}
-
-// ResetLeaseTimestamp temporarily releases a locked timestamp until the next
-// lease is acquired. This is mainly used to avoid deadlocks between the current txn
-// and a different txn conducting a schema change on our behalf.
-func (tc *Collection) ResetLeaseTimestamp(ctx context.Context) {
-	tc.leased.maybeReleaseReadTimestamp(ctx)
 }
 
 // ResetLeaseGeneration selects an initial value at the beginning of a txn
@@ -414,8 +367,7 @@ func WithOnlyVersionBump() WriteDescOption {
 }
 
 type getAllOptions struct {
-	allowLeased  bool
-	withMetadata bool
+	allowLeased bool
 }
 
 // GetAllOption defines functional options for GetAll* methods.
@@ -429,21 +381,9 @@ func (c allowLeasedOption) apply(opts *getAllOptions) {
 	opts.allowLeased = bool(c)
 }
 
-type withMetaDataOption bool
-
-func (c withMetaDataOption) apply(opts *getAllOptions) {
-	opts.withMetadata = bool(c)
-}
-
 // WithAllowLeased configures GetAll* methods to allow leased descriptors.
 func WithAllowLeased() GetAllOption {
 	return allowLeasedOption(true)
-}
-
-// WithMetaData configures GetAll* methods to fetch comments and zone
-// configs.
-func WithMetaData() GetAllOption {
-	return withMetaDataOption(true)
 }
 
 // applyGetAllOptions applies the provided functional options to a getAllOptions struct.
@@ -459,25 +399,14 @@ var allowLeasedDescriptorsInCatalogViews = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"sql.catalog.allow_leased_descriptors.enabled",
 	"if true, catalog views (crdb_internal, information_schema, pg_catalog) can use leased descriptors for improved performance",
-	true,
+	false,
 	settings.WithPublic,
-)
-
-func getAllowLeasedDescriptorsInCatalogViews(ctx context.Context, settings *cluster.Settings) bool {
-	return allowLeasedDescriptorsInCatalogViews.Get(&settings.SV) && settings.Version.IsActive(ctx, clusterversion.V26_1)
-}
-
-var prefetchLeasedDescriptorsInCatalogViews = settings.RegisterBoolSetting(
-	settings.ApplicationLevel,
-	"sql.catalog.allow_leased_descriptors.prefetch.enabled",
-	"if true, catalog views (crdb_internal, information_schema, pg_catalog) can prefetch leased descriptors for improved performance",
-	true,
 )
 
 // GetCatalogGetAllOptions returns the functional options for GetAll* methods
 // based on the cluster setting for allowing leased descriptors in catalog views.
-func GetCatalogGetAllOptions(ctx context.Context, s *cluster.Settings) []GetAllOption {
-	if getAllowLeasedDescriptorsInCatalogViews(ctx, s) {
+func GetCatalogGetAllOptions(sv *settings.Values) []GetAllOption {
+	if allowLeasedDescriptorsInCatalogViews.Get(sv) {
 		return []GetAllOption{WithAllowLeased()}
 	}
 	return nil
@@ -486,9 +415,9 @@ func GetCatalogGetAllOptions(ctx context.Context, s *cluster.Settings) []GetAllO
 // GetCatalogDescriptorGetter returns the appropriate descriptor getter for
 // catalog views based on the cluster setting.
 func GetCatalogDescriptorGetter(
-	ctx context.Context, descriptors *Collection, txn *kv.Txn, s *cluster.Settings,
+	descriptors *Collection, txn *kv.Txn, sv *settings.Values,
 ) ByIDGetterBuilder {
-	if getAllowLeasedDescriptorsInCatalogViews(ctx, s) {
+	if allowLeasedDescriptorsInCatalogViews.Get(sv) {
 		return descriptors.ByIDWithLeased(txn)
 	}
 	return descriptors.ByIDWithoutLeased(txn)
@@ -517,19 +446,13 @@ func (tc *Collection) EmitDescriptorUpdatesKey(ctx context.Context, txn *kv.Txn)
 	if !tc.settings.Version.IsActive(ctx, clusterversion.V25_4) ||
 		tc.readerCatalogSetup ||
 		tc.uncommitted.uncommitted.Len() == 0 ||
-		!lease.GetLockedLeaseTimestampEnabled(ctx, tc.settings) {
+		!lease.LockedLeaseTimestamp.Get(&tc.settings.SV) {
 		return nil
 	}
 	updates := &descpb.DescriptorUpdates{}
 	descUpdateID := descpb.InvalidID
 	// Add all the descriptors that have been modified in this transaction.
 	if err := tc.uncommitted.iterateUncommittedByID(func(desc catalog.Descriptor) error {
-		// Dropped / Offline descriptors can be ignored, since these can no longer be leased.
-		// Note: We still emit a record, but that is to allow the timestamp to move
-		// forward.
-		if desc.Dropped() || desc.Offline() {
-			return nil
-		}
 		updates.DescriptorIDs = append(updates.DescriptorIDs, desc.GetID())
 		updates.DescriptorVersions = append(updates.DescriptorVersions, desc.GetVersion())
 		if descUpdateID < desc.GetID() {
@@ -999,7 +922,7 @@ func (tc *Collection) GetAll(
 	if err != nil {
 		return nstree.Catalog{}, err
 	}
-	ret, err := tc.aggregateAllLayers(ctx, txn, options, stored)
+	ret, err := tc.aggregateAllLayers(ctx, txn, options.allowLeased, stored)
 	if err != nil {
 		return nstree.Catalog{}, err
 	}
@@ -1024,8 +947,8 @@ func (tc *Collection) GetAllComments(
 	if err != nil {
 		return nil, err
 	}
-	var options = getAllOptions{}
-	comments, err := tc.aggregateAllLayers(ctx, txn, options, kvComments)
+	const allowLeased = false
+	comments, err := tc.aggregateAllLayers(ctx, txn, allowLeased, kvComments)
 	if err != nil {
 		return nil, err
 	}
@@ -1051,7 +974,7 @@ func (tc *Collection) GetAllDatabases(
 	if err != nil {
 		return nstree.Catalog{}, err
 	}
-	ret, err := tc.aggregateAllLayers(ctx, txn, options, stored)
+	ret, err := tc.aggregateAllLayers(ctx, txn, options.allowLeased, stored)
 	if err != nil {
 		return nstree.Catalog{}, err
 	}
@@ -1078,9 +1001,9 @@ func (tc *Collection) GetAllSchemasInDatabase(
 	}
 	var ret nstree.MutableCatalog
 	if db.HasPublicSchemaWithDescriptor() {
-		ret, err = tc.aggregateAllLayers(ctx, txn, options, stored)
+		ret, err = tc.aggregateAllLayers(ctx, txn, options.allowLeased, stored)
 	} else {
-		ret, err = tc.aggregateAllLayers(ctx, txn, options, stored, schemadesc.GetPublicSchema())
+		ret, err = tc.aggregateAllLayers(ctx, txn, options.allowLeased, stored, schemadesc.GetPublicSchema())
 	}
 	if err != nil {
 		return nstree.Catalog{}, err
@@ -1122,12 +1045,7 @@ func (tc *Collection) GetAllObjectsInSchema(
 		if err != nil {
 			return nstree.Catalog{}, err
 		}
-		if options.allowLeased && prefetchLeasedDescriptorsInCatalogViews.Get(&tc.settings.SV) {
-			if err := tc.leased.ensureLeasesExist(ctx, stored.OrderedDescriptorIDs()); err != nil {
-				return nstree.Catalog{}, err
-			}
-		}
-		ret, err = tc.aggregateAllLayers(ctx, txn, options, stored, sc)
+		ret, err = tc.aggregateAllLayers(ctx, txn, options.allowLeased, stored, sc)
 		if err != nil {
 			return nstree.Catalog{}, err
 		}
@@ -1153,11 +1071,6 @@ func (tc *Collection) GetAllInDatabase(
 	if err != nil {
 		return nstree.Catalog{}, err
 	}
-	if options.allowLeased && prefetchLeasedDescriptorsInCatalogViews.Get(&tc.settings.SV) {
-		if err := tc.leased.ensureLeasesExist(ctx, stored.OrderedDescriptorIDs()); err != nil {
-			return nstree.Catalog{}, err
-		}
-	}
 	schemas, err := tc.GetAllSchemasInDatabase(ctx, txn, db, opts...)
 	if err != nil {
 		return nstree.Catalog{}, err
@@ -1170,7 +1083,7 @@ func (tc *Collection) GetAllInDatabase(
 	}); err != nil {
 		return nstree.Catalog{}, err
 	}
-	ret, err := tc.aggregateAllLayers(ctx, txn, options, stored, schemasSlice...)
+	ret, err := tc.aggregateAllLayers(ctx, txn, options.allowLeased, stored, schemasSlice...)
 	if err != nil {
 		return nstree.Catalog{}, err
 	}
@@ -1205,16 +1118,11 @@ func (tc *Collection) GetAllTablesInDatabase(
 	if err != nil {
 		return nstree.Catalog{}, err
 	}
-	if options.allowLeased && prefetchLeasedDescriptorsInCatalogViews.Get(&tc.settings.SV) {
-		if err := tc.leased.ensureLeasesExist(ctx, stored.OrderedDescriptorIDs()); err != nil {
-			return nstree.Catalog{}, err
-		}
-	}
 	var ret nstree.MutableCatalog
 	if db.HasPublicSchemaWithDescriptor() {
-		ret, err = tc.aggregateAllLayers(ctx, txn, options, stored)
+		ret, err = tc.aggregateAllLayers(ctx, txn, options.allowLeased, stored)
 	} else {
-		ret, err = tc.aggregateAllLayers(ctx, txn, options, stored, schemadesc.GetPublicSchema())
+		ret, err = tc.aggregateAllLayers(ctx, txn, options.allowLeased, stored, schemadesc.GetPublicSchema())
 	}
 	if err != nil {
 		return nstree.Catalog{}, err
@@ -1239,7 +1147,7 @@ func (tc *Collection) GetAllTablesInDatabase(
 func (tc *Collection) aggregateAllLayers(
 	ctx context.Context,
 	txn *kv.Txn,
-	getAllOptions getAllOptions,
+	allowLeased bool,
 	stored nstree.Catalog,
 	schemas ...catalog.SchemaDescriptor,
 ) (ret nstree.MutableCatalog, _ error) {
@@ -1338,12 +1246,8 @@ func (tc *Collection) aggregateAllLayers(
 	tc.deletedDescs.ForEach(descIDs.Remove)
 	allDescs := make([]catalog.Descriptor, descIDs.Len())
 	flags := defaultUnleasedFlags()
-	if getAllOptions.allowLeased {
+	if allowLeased {
 		flags.layerFilters.withoutLeased = false
-		flags.layerFilters.withAdding = true
-	}
-	if getAllOptions.withMetadata {
-		flags.layerFilters.withMetadata = true
 	}
 	if err := getDescriptorsByID(
 		ctx, tc, txn, flags, allDescs, descIDs.Ordered()...,
@@ -1578,8 +1482,7 @@ func (tc *Collection) GetIndexComment(
 // MaybeSetReplicationSafeTS modifies a txn to apply the replication safe timestamp,
 // if we are executing against a PCR reader catalog.
 func (tc *Collection) MaybeSetReplicationSafeTS(ctx context.Context, txn *kv.Txn) error {
-	now := tc.leased.lm.GetReadTimestamp(ctx, txn.DB().Clock().Now())
-	defer now.Release(ctx)
+	now := tc.leased.lm.GetReadTimestamp(txn.DB().Clock().Now())
 	desc, err := tc.leased.lm.Acquire(ctx, now, keys.SystemDatabaseID)
 	if err != nil {
 		return err
@@ -1630,7 +1533,7 @@ func (tc *Collection) LockDescriptorWithLease(
 		return uint64(vo.Desc().GetVersion()), nil
 	}
 	// Otherwise, we should be able to lease the relevant object out.
-	desc, shouldReadFromStore, err := tc.leased.getByID(ctx, txn, id, false /* withoutLockedTimestamp */)
+	desc, shouldReadFromStore, err := tc.leased.getByID(ctx, txn, id)
 	if err != nil {
 		return 0, err
 	}

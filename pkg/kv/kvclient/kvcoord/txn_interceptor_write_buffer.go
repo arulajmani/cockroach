@@ -40,22 +40,21 @@ var BufferedWritesEnabled = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"kv.transaction.write_buffering.enabled",
 	"if enabled, transactional writes are buffered on the client",
-	metamorphic.ConstantWithTestBool("kv.transaction.write_buffering.enabled", true /* defaultValue */),
-	settings.WithPublic,
+	metamorphic.ConstantWithTestBool("kv.transaction.write_buffering.enabled", false /* defaultValue */),
 )
 
 var bufferedWritesScanTransformEnabled = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"kv.transaction.write_buffering.transformations.scans.enabled",
 	"if enabled, locking scans and reverse scans with replicated durability are transformed to unreplicated durability",
-	metamorphic.ConstantWithTestBool("kv.transaction.write_buffering.transformations.scans.enabled", true /* defaultValue */),
+	metamorphic.ConstantWithTestBool("kv.transaction.write_buffering.transformations.scans.enabled", false /* defaultValue */),
 )
 
 var bufferedWritesGetTransformEnabled = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"kv.transaction.write_buffering.transformations.get.enabled",
 	"if enabled, locking get requests with replicated durability are transformed to unreplicated durability",
-	metamorphic.ConstantWithTestBool("kv.transaction.write_buffering.transformations.get.enabled", true /* defaultValue */),
+	metamorphic.ConstantWithTestBool("kv.transaction.write_buffering.transformations.get.enabled", false /* defaultValue */),
 )
 
 const defaultBufferSize = 1 << 22 // 4MB
@@ -73,7 +72,6 @@ var BufferedWritesMaxBufferSize = settings.RegisterByteSizeSetting(
 		10<<10,            // max, 10KiB
 	)),
 	settings.NonNegativeInt,
-	settings.WithPublic,
 )
 
 // txnWriteBuffer is a txnInterceptor that buffers transactional writes until
@@ -1162,15 +1160,6 @@ func (twb *txnWriteBuffer) mergeWithScanResp(
 			"with COL_BATCH_RESPONSE scan format")
 	}
 
-	if twb.buffer.Len() == 0 {
-		// If we haven't buffered any writes, then we can just return the server
-		// response unchanged.
-		// TODO(yuzefovich): we could take the optimization further by examining
-		// whether any buffered writes overlap with the Scan request and
-		// skipping the merge step if not.
-		return resp, nil
-	}
-
 	respIter := newScanRespIter(req, resp)
 	// First, calculate the size of the merged response. This then allows us to
 	// exactly pre-allocate the response slice when constructing the respMerger.
@@ -1193,15 +1182,6 @@ func (twb *txnWriteBuffer) mergeWithReverseScanResp(
 	if req.ScanFormat == kvpb.COL_BATCH_RESPONSE {
 		return nil, errors.AssertionFailedf("unexpectedly called mergeWithReverseScanResp on a " +
 			"ReverseScanRequest with COL_BATCH_RESPONSE scan format")
-	}
-
-	if twb.buffer.Len() == 0 {
-		// If we haven't buffered any writes, then we can just return the server
-		// response unchanged.
-		// TODO(yuzefovich): we could take the optimization further by examining
-		// whether any buffered writes overlap with the ReverseScan request and
-		// skipping the merge step if not.
-		return resp, nil
 	}
 
 	respIter := newReverseScanRespIter(req, resp)
@@ -1395,11 +1375,6 @@ func (rr requestRecord) toResp(
 	var ru kvpb.ResponseUnion
 	switch req := rr.origRequest.(type) {
 	case *kvpb.ConditionalPutRequest:
-		if !rr.stripped && br.GetInner().Header().ResumeSpan != nil {
-			return kvpb.ResponseUnion{},
-				kvpb.NewError(errors.AssertionFailedf("unexpected non-nil ResumeSpan for ConditionalPutRequest"))
-		}
-
 		// Evaluate the condition.
 		evalFn := mvcceval.MaybeConditionFailedError
 		if twb.testingOverrideCPutEvalFn != nil {
@@ -1413,6 +1388,11 @@ func (rr requestRecord) toResp(
 			// We only use the response from KV if there wasn't already a
 			// buffered value for this key that our transaction wrote
 			// previously.
+			// TODO(yuzefovich): for completeness, we should check whether
+			// ResumeSpan is non-nil, in which case the response from KV is
+			// incomplete. This can happen when MaxSpanRequestKeys and/or
+			// TargetBytes limits are set on the batch, and SQL currently
+			// doesn't do that for batches with CPuts.
 			val = br.GetInner().(*kvpb.GetResponse).Value
 		}
 
@@ -1443,12 +1423,12 @@ func (rr requestRecord) toResp(
 		twb.addToBuffer(req.Key, req.Value, req.Sequence, req.KVNemesisSeq, dla)
 
 	case *kvpb.PutRequest:
-		if !rr.stripped && br.GetInner().Header().ResumeSpan != nil {
-			return kvpb.ResponseUnion{},
-				kvpb.NewError(errors.AssertionFailedf("unexpected non-nil ResumeSpan for PutRequest"))
-		}
-
 		var dla *bufferedDurableLockAcquisition
+		// TODO(yuzefovich): for completeness, we should check whether
+		// ResumeSpan is non-nil if we transformed the request, in which case
+		// the response from KV is incomplete. This can happen when
+		// MaxSpanRequestKeys and/or TargetBytes limits are set on the batch,
+		// and SQL currently doesn't do that for batches with Puts.
 		if rr.transformed && exclusionTimestampRequired {
 			dla = &bufferedDurableLockAcquisition{
 				str: lock.Exclusive,

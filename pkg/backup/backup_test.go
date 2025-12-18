@@ -103,7 +103,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
 	"github.com/cockroachdb/cockroach/pkg/util/randutil"
-	"github.com/cockroachdb/cockroach/pkg/util/rangedesc"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
@@ -295,7 +294,7 @@ func TestBackupRestorePartitioned(t *testing.T) {
 	// Disabled to run within tenant as certain MR features are not available to tenants.
 	args := base.TestClusterArgs{
 		ServerArgs: base.TestServerArgs{
-			DefaultTestTenant: base.TestDoesNotWorkWithSecondaryTenantsButWeDontKnowWhyYet(142798),
+			DefaultTestTenant: base.TODOTestTenantDisabled,
 		},
 		ServerArgsPerNode: map[int]base.TestServerArgs{
 			0: {
@@ -451,14 +450,12 @@ func TestBackupRestoreExecLocality(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	skip.UnderRace(t, "too slow")
-
 	const numAccounts = 1000
 
 	// Disabled to run within tenant as certain MR features are not available to tenants.
 	args := base.TestClusterArgs{
 		ServerArgs: base.TestServerArgs{
-			DefaultTestTenant: base.TestDoesNotWorkWithSecondaryTenantsButWeDontKnowWhyYet(142798),
+			DefaultTestTenant: base.TODOTestTenantDisabled,
 		},
 		ServerArgsPerNode: map[int]base.TestServerArgs{
 			0: {
@@ -4081,8 +4078,7 @@ func TestNonLinearChain(t *testing.T) {
 	defer cleanup()
 
 	tc := testcluster.NewTestCluster(t, 1, base.TestClusterArgs{ServerArgs: base.TestServerArgs{
-		DefaultTestTenant: base.TestDoesNotWorkWithSecondaryTenantsButWeDontKnowWhyYet(142798),
-		ExternalIODir:     dir, Knobs: base.TestingKnobs{
+		DefaultTestTenant: base.TODOTestTenantDisabled, ExternalIODir: dir, Knobs: base.TestingKnobs{
 			JobsTestingKnobs: jobs.NewTestingKnobsWithShortIntervals(),
 		},
 	}})
@@ -6506,8 +6502,8 @@ func TestProtectedTimestampsFailDueToLimits(t *testing.T) {
 			// The meta table is used to track limits.
 			UseMetaTable: true,
 		}
-		// Test fails within a tenant.
-		params.ServerArgs.DefaultTestTenant = base.TestDoesNotWorkWithSecondaryTenantsButWeDontKnowWhyYet(142798)
+		// Test fails within a tenant. Tracked with #76378.
+		params.ServerArgs.DefaultTestTenant = base.TODOTestTenantDisabled
 		tc := testcluster.StartTestCluster(t, 1, params)
 		defer tc.Stopper().Stop(ctx)
 		db := tc.ServerConn(0)
@@ -7604,8 +7600,6 @@ func TestClientDisconnect(t *testing.T) {
 func TestBackupExportRequestTimeout(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
-
-	skip.UnderDeadlock(t)
 
 	allowRequest := make(chan struct{})
 	defer close(allowRequest)
@@ -9277,8 +9271,8 @@ func TestGCDropIndexSpanExpansion(t *testing.T) {
 		// This test hangs when run within a tenant. It's likely that
 		// the cause of the hang is the fact that we're waiting on the GC to
 		// complete, and we don't have visibility into the GC completing from
-		// the tenant. More investigation is required.
-		DefaultTestTenant: base.TestDoesNotWorkWithSecondaryTenantsButWeDontKnowWhyYet(142798),
+		// the tenant. More investigation is required. Tracked with #76378.
+		DefaultTestTenant: base.TODOTestTenantDisabled,
 		Knobs: base.TestingKnobs{
 			GCJob: &sql.GCJobTestingKnobs{
 				RunBeforePerformGC: func(id jobspb.JobID) error {
@@ -9452,7 +9446,7 @@ func TestExcludeDataFromBackupAndRestore(t *testing.T) {
 			ServerArgs: base.TestServerArgs{
 				// Disabled to run within tenants because the function that sets up the restoring cluster
 				// has not been configured yet to run within tenants.
-				DefaultTestTenant: base.TestDoesNotWorkWithSecondaryTenantsButWeDontKnowWhyYet(142798),
+				DefaultTestTenant: base.TODOTestTenantDisabled,
 				Knobs: base.TestingKnobs{
 					JobsTestingKnobs: jobs.NewTestingKnobsWithShortIntervals(), // speeds up test
 					SpanConfig: &spanconfig.TestingKnobs{
@@ -9553,8 +9547,8 @@ func TestExportRequestBelowGCThresholdOnDataExcludedFromBackup(t *testing.T) {
 	args := base.TestClusterArgs{
 		ServerArgs: base.TestServerArgs{
 			// Test fails when run within a tenant as zone config
-			// updates are not allowed by default.
-			DefaultTestTenant: base.TestDoesNotWorkWithSecondaryTenantsButWeDontKnowWhyYet(142798),
+			// updates are not allowed by default. Tracked with 73768.
+			DefaultTestTenant: base.TODOTestTenantDisabled,
 		},
 	}
 	args.ServerArgs.Knobs.Store = &kvserver.StoreTestingKnobs{
@@ -9658,8 +9652,8 @@ func TestExcludeDataFromBackupDoesNotHoldupGC(t *testing.T) {
 	params := base.TestClusterArgs{}
 	params.ServerArgs.ExternalIODir = dir
 	// Test fails when run within a tenant. More investigation is
-	// required.
-	params.ServerArgs.DefaultTestTenant = base.TestDoesNotWorkWithSecondaryTenantsButWeDontKnowWhyYet(142798)
+	// required. Tracked with #76378.
+	params.ServerArgs.DefaultTestTenant = base.TODOTestTenantDisabled
 	params.ServerArgs.Knobs.Store = &kvserver.StoreTestingKnobs{
 		DisableGCQueue:            true,
 		DisableLastProcessedCheck: true,
@@ -10503,7 +10497,6 @@ func TestBackupDBWithViewOnAdjacentDBRange(t *testing.T) {
 			},
 		})
 	defer cleanupFn()
-	srv0 := tc.StorageLayer(0)
 	s0 := tc.ApplicationLayer(0)
 
 	// Speeds up the test.
@@ -10534,7 +10527,7 @@ func TestBackupDBWithViewOnAdjacentDBRange(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	// Force GC on da.t2 to advance its GC threshold.
-	err := srv0.ForceTableGC(context.Background(), "da", "t2", s0.Clock().Now().Add(-int64(1*time.Second), 0))
+	err := s0.ForceTableGC(context.Background(), "da", "t2", s0.Clock().Now().Add(-int64(1*time.Second), 0))
 	require.NoError(t, err)
 
 	// This statement should succeed as we are not backing up the span for dbview,
@@ -11199,334 +11192,4 @@ func TestBackupRestoreFunctionDependenciesRevisionHistory(t *testing.T) {
 	sqlDB.Exec(t, `USE test6`)
 
 	checkFunctions("test6")
-}
-
-func TestBackupRestoreDatabaseRevisionHistory(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-
-	dataDir, dirCleanupFunc := testutils.TempDir(t)
-	defer dirCleanupFunc()
-
-	_, sqlDB, cleanupFn := backupRestoreTestSetupEmpty(t, singleNode, dataDir, InitManualReplication, base.TestClusterArgs{})
-	defer cleanupFn()
-
-	// Helper function to check if a database exists.
-	checkDatabase := func(dbName string, shouldExist bool) {
-		var count int
-		sqlDB.QueryRow(t, `SELECT count(*) FROM system.namespace WHERE name = $1 AND "parentID" = 0`, dbName).Scan(&count)
-		if shouldExist {
-			if count != 1 {
-				t.Fatalf("expected database %s to exist, but it doesn't", dbName)
-			}
-		} else {
-			if count != 0 {
-				t.Fatalf("expected database %s to not exist, but it does", dbName)
-			}
-		}
-	}
-
-	sqlDB.Exec(t, `CREATE DATABASE test_db`)
-
-	// T1: Full cluster backup with revision history.
-	backupPath := "nodelocal://1/database_revision_backup"
-	sqlDB.Exec(t, `BACKUP INTO $1 WITH revision_history`, backupPath)
-
-	// T2: Capture timestamp after backup (database exists).
-	var t2 string
-	sqlDB.QueryRow(t, `SELECT cluster_logical_timestamp()`).Scan(&t2)
-
-	sqlDB.Exec(t, `DROP DATABASE test_db`)
-
-	checkDatabase("test_db", false)
-
-	// T3: Capture timestamp after dropping database.
-	var t3 string
-	sqlDB.QueryRow(t, `SELECT cluster_logical_timestamp()`).Scan(&t3)
-
-	sqlDB.Exec(t, `CREATE DATABASE ephemeral`)
-
-	// T4: Capture timestamp the has the ephemeral database.
-	var t4 string
-	sqlDB.QueryRow(t, `SELECT cluster_logical_timestamp()`).Scan(&t4)
-
-	sqlDB.Exec(t, `DROP DATABASE ephemeral`)
-
-	// T5: Capture timestamp after dropping ephemeral database.
-	var t5 string
-	sqlDB.QueryRow(t, `SELECT cluster_logical_timestamp()`).Scan(&t5)
-
-	sqlDB.Exec(t, `BACKUP INTO LATEST IN $1 WITH revision_history`, backupPath)
-
-	// Choose one of the 4 restores to run, to reduce test runtime:
-	i := rand.Intn(4)
-
-	switch i {
-	case 0:
-		// Restore AOST t2 -> expect database to exist.
-		restoreQuery := fmt.Sprintf(
-			"RESTORE FROM LATEST IN $1 AS OF SYSTEM TIME %s", t2)
-		sqlDB.Exec(t, restoreQuery, backupPath)
-		checkDatabase("test_db", true)
-
-		sqlDB.Exec(t, `DROP DATABASE test_db`)
-	case 1:
-		// Restore AOST t3 -> expect database to not exist.
-		restoreQuery := fmt.Sprintf(
-			"RESTORE FROM LATEST IN $1 AS OF SYSTEM TIME %s", t3)
-		sqlDB.Exec(t, restoreQuery, backupPath)
-		checkDatabase("test_db", false)
-	case 2:
-		// Restore AOST t4 -> ephemeral db exists.
-		restoreQuery := fmt.Sprintf(
-			"RESTORE FROM LATEST IN $1 AS OF SYSTEM TIME %s", t4)
-		sqlDB.Exec(t, restoreQuery, backupPath)
-		checkDatabase("ephemeral", true)
-
-		sqlDB.Exec(t, `DROP DATABASE ephemeral`)
-	case 3:
-		restoreQuery := fmt.Sprintf(
-			"RESTORE FROM LATEST IN $1 AS OF SYSTEM TIME %s", t5)
-		sqlDB.Exec(t, restoreQuery, backupPath)
-		checkDatabase("ephemeral", false)
-	}
-}
-
-func speedUpSpanConfigReconciliation(t *testing.T, sqlDB *sqlutils.SQLRunner) {
-	sqlDB.Exec(t, `SET CLUSTER SETTING spanconfig.reconciliation_job.checkpoint_interval = '100ms'`)
-	sqlDB.Exec(t, `SET CLUSTER SETTING kv.closed_timestamp.target_duration = '200ms'`)
-	sqlDB.Exec(t, `SET CLUSTER SETTING kv.rangefeed.closed_timestamp_refresh_interval = '200ms'`)
-	sqlDB.Exec(t, "SET CLUSTER SETTING kv.allocator.load_based_rebalancing = off")
-	sqlDB.Exec(t, "SET CLUSTER SETTING kv.allocator.min_lease_transfer_interval = '10ms'")
-}
-
-// TestStrictLocalityAwareBackupRegionalByRow tests that a strict locality-aware
-// backup.
-func TestStrictLocalityAwareBackup(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-
-	skip.UnderDuress(t, "takes too long under duress")
-
-	ctx := context.Background()
-
-	knobs := base.TestingKnobs{
-		JobsTestingKnobs: jobs.NewTestingKnobsWithShortIntervals(),
-		BackupRestore: &sql.BackupRestoreTestingKnobs{
-			RestoreSpanConfigConformanceRetryPolicy: &retry.Options{
-				InitialBackoff: time.Millisecond,
-				Multiplier:     2,
-				MaxBackoff:     1 * time.Second,
-				MaxDuration:    30 * time.Second,
-			},
-		}}
-
-	args := base.TestClusterArgs{
-		ServerArgs: base.TestServerArgs{
-			// Increases allocator queue frequency.
-			ScanMaxIdleTime: 10 * time.Millisecond,
-			// The range scanner validation requires the system tenant.
-			DefaultTestTenant: base.TestIsSpecificToStorageLayerAndNeedsASystemTenant,
-			Knobs:             knobs,
-		},
-		ServerArgsPerNode: map[int]base.TestServerArgs{
-			0: {Locality: localityFromStr(t, "region=east1"), Knobs: knobs},
-			1: {Locality: localityFromStr(t, "region=east2"), Knobs: knobs},
-			2: {Locality: localityFromStr(t, "region=east3"), Knobs: knobs},
-		}}
-
-	tc, sqlDB, _, cleanupFn := backupRestoreTestSetupWithParams(t, 3, 0 /* numAccounts */, func(tc *testcluster.TestCluster) {}, args)
-	defer cleanupFn()
-
-	speedUpSpanConfigReconciliation(t, sqlDB)
-	sqlDB.Exec(t, `SET CLUSTER SETTING restore.wait_for_span_config_conformance.enabled = true`)
-
-	sqlDB.Exec(t, "CREATE DATABASE test")
-	sqlDB.Exec(t, `ALTER DATABASE test CONFIGURE ZONE USING constraints = '[+region=east3]', num_replicas = 1;`)
-	sqlDB.Exec(t, "CREATE TABLE test.x (id INT PRIMARY KEY, n INT)")
-	sqlDB.Exec(t, "INSERT INTO test.x VALUES (1, 1)")
-
-	// Wait for data constraints to be enforced.
-	east3NodeID := tc.Servers[2].NodeID()
-	checkLocalities := func(targetSpan roachpb.Span, scanner rangedesc.Scanner) func() error {
-		// make pageSize large enough to not affect the test
-		pageSize := 10000
-		init := func() {}
-
-		return func() error {
-			return scanner.Scan(ctx, pageSize, init, targetSpan, func(descriptors ...roachpb.RangeDescriptor) error {
-				for _, desc := range descriptors {
-					for _, replica := range desc.InternalReplicas {
-						if replica.NodeID != east3NodeID {
-							return errors.Newf("found table data located on another node %d, desc %v",
-								replica.NodeID, desc)
-						}
-					}
-				}
-				return nil
-			})
-		}
-	}
-	srv := tc.Servers[0]
-	codec := keys.MakeSQLCodec(srv.RPCContext().TenantID)
-	tableDesc := desctestutils.TestingGetPublicTableDescriptor(
-		srv.DB(), codec, "test", "x")
-
-	testutils.SucceedsWithin(t,
-		checkLocalities(tableDesc.PrimaryIndexSpan(codec), rangedesc.NewScanner(srv.DB())),
-		time.Second*45*5)
-
-	require.NoError(t, tc.WaitForFullReplication())
-
-	// Clear the range cache to ensure it's updated with all replica placement info.
-	for _, s := range tc.Servers {
-		s.DistSenderI().(*kvcoord.DistSender).RangeDescriptorCache().Clear()
-	}
-
-	// Create locality-aware backup URIs with STRICT option.
-	backupURIs := []string{
-		"nodelocal://1/rbr-backup-1?COCKROACH_LOCALITY=default",
-		fmt.Sprintf("nodelocal://1/rbr-backup-1?COCKROACH_LOCALITY=%s", url.QueryEscape("region=east1")),
-		fmt.Sprintf("nodelocal://1/rbr-backup-2?COCKROACH_LOCALITY=%s", url.QueryEscape("region=east2")),
-		fmt.Sprintf("nodelocal://1/rbr-backup-3?COCKROACH_LOCALITY=%s", url.QueryEscape("region=east3")),
-	}
-
-	// Run a STRICT locality-aware backup.
-	backupQuery := fmt.Sprintf(
-		"BACKUP DATABASE test INTO (%q, %q, %q, %q) WITH STRICT STORAGE LOCALITY",
-		backupURIs[0], backupURIs[1], backupURIs[2], backupURIs[3],
-	)
-	sqlDB.Exec(t, backupQuery)
-
-	// Cannot specify strict storage locality with execution locality
-	sqlDB.ExpectErr(t, "STRICT STORAGE LOCALITY option cannot be specified with the EXECUTION LOCALITY option", fmt.Sprintf(
-		"BACKUP DATABASE test INTO (%q, %q, %q, %q) WITH STRICT STORAGE LOCALITY, EXECUTION LOCALITY = %q",
-		backupURIs[0], backupURIs[1], backupURIs[2], backupURIs[3], backupURIs[3]))
-
-	// Removing east3 URI should fail the STRICT locality-aware backup.
-	badCmd := fmt.Sprintf(
-		"BACKUP DATABASE test INTO (%q,%q) WITH STRICT STORAGE LOCALITY",
-		backupURIs[0], backupURIs[1],
-	)
-	if _, err := sqlDB.DB.ExecContext(ctx, badCmd); err == nil {
-		require.NoError(t, checkLocalities(tableDesc.PrimaryIndexSpan(codec), rangedesc.NewScanner(srv.DB()))())
-		t.Fatal("command succeeded but localities are correct")
-	}
-
-	// Removing the strict flag allows the backup to pass
-	sqlDB.Exec(t, fmt.Sprintf(
-		"BACKUP DATABASE test INTO (%q,%q)",
-		backupURIs[0], backupURIs[1],
-	))
-}
-
-func TestRestoreConformanceFailure(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-
-	skip.UnderDuress(t, "takes too long under duress")
-
-	knobs := base.TestingKnobs{
-		JobsTestingKnobs: jobs.NewTestingKnobsWithShortIntervals(),
-		BackupRestore: &sql.BackupRestoreTestingKnobs{
-			RestoreSpanConfigConformanceRetryPolicy: &retry.Options{
-				InitialBackoff: time.Millisecond,
-				Multiplier:     2,
-				MaxBackoff:     1 * time.Second,
-				MaxDuration:    60 * time.Second,
-			},
-		}}
-
-	args := base.TestClusterArgs{
-		ServerArgs: base.TestServerArgs{
-			DefaultTestTenant: base.TestIsSpecificToStorageLayerAndNeedsASystemTenant,
-			// Increases allocator queue frequency.
-			ScanMaxIdleTime: 10 * time.Millisecond,
-			Knobs:           knobs,
-		},
-		ServerArgsPerNode: map[int]base.TestServerArgs{
-			0: {Locality: localityFromStr(t, "region=east1"), Knobs: knobs},
-			1: {Locality: localityFromStr(t, "region=east2"), Knobs: knobs},
-			2: {Locality: localityFromStr(t, "region=east3"), Knobs: knobs},
-		}}
-
-	_, sqlDB, _, cleanupFn := backupRestoreTestSetupWithParams(t, 3, 0 /* numAccounts */, InitManualReplication, args)
-	defer cleanupFn()
-
-	speedUpSpanConfigReconciliation(t, sqlDB)
-
-	sqlDB.Exec(t, `SET CLUSTER SETTING restore.wait_for_span_config_conformance.enabled = true`)
-
-	// 3 Node cluster will never conform to an rf of 5.
-	sqlDB.Exec(t, `ALTER RANGE default CONFIGURE ZONE USING num_replicas = 5;`)
-
-	sqlDB.Exec(t, "CREATE DATABASE test")
-	sqlDB.Exec(t, "CREATE TABLE test.x (id INT PRIMARY KEY, n INT)")
-	sqlDB.Exec(t, "INSERT INTO test.x VALUES (1, 1)")
-
-	backupURI := "nodelocal://1/restore_conformance_failure"
-	sqlDB.Exec(t, "BACKUP DATABASE test INTO $1", backupURI)
-
-	// Ensure rf=5 zone config has been applied as the default span config, so
-	// that when restore creates new descriptors, they inherit the rf=5 default.
-	sqlutils.WaitForSpanConfigReconciliation(t, sqlDB)
-
-	// This will take a long time: we give 60 seconds for the span configs to
-	// advance, then restore will chew up 60s to fail to conform.
-	sqlDB.ExpectErr(t, "ranges for restoring objects could not conform to zone configs", fmt.Sprintf(
-		"RESTORE DATABASE test FROM LATEST IN %q with new_db_name = test_restored",
-		backupURI,
-	))
-
-	// After resetting the zone configs, the restore should succeed.
-	sqlDB.Exec(t, `ALTER RANGE default CONFIGURE ZONE USING num_replicas = 3;`)
-	sqlDB.Exec(t, fmt.Sprintf(
-		"RESTORE DATABASE test FROM LATEST IN %q with new_db_name = test_restored",
-		backupURI,
-	))
-}
-
-// TestRestoreConformanceSingleNode tests that a restore on a single-node works
-// with span conformance is enabled and ensures the checkpointing logic works.
-func TestRestoreConformanceSingleNode(t *testing.T) {
-	defer leaktest.AfterTest(t)()
-	defer log.Scope(t).Close(t)
-
-	const numAccounts = 1000
-
-	params := base.TestClusterArgs{
-		ServerArgs: base.TestServerArgs{
-			// To manipulate span config knobs
-			DefaultTestTenant: base.TestIsSpecificToStorageLayerAndNeedsASystemTenant,
-			Knobs: base.TestingKnobs{
-				JobsTestingKnobs: jobs.NewTestingKnobsWithShortIntervals(),
-			},
-		},
-	}
-
-	_, sqlDB, _, cleanupFn := backupRestoreTestSetupWithParams(t, singleNode, numAccounts, NoInitManipulation, params)
-	defer cleanupFn()
-
-	speedUpSpanConfigReconciliation(t, sqlDB)
-
-	sqlDB.Exec(t, `SET CLUSTER SETTING restore.wait_for_span_config_conformance.enabled = true`)
-
-	sqlDB.Exec(t, "SET CLUSTER SETTING jobs.debug.pausepoints = 'restore.before_publishing_descriptors'")
-
-	sqlDB.Exec(t, fmt.Sprintf("BACKUP DATABASE data INTO '%s'", localFoo))
-
-	var jobId int
-	sqlDB.QueryRow(t, fmt.Sprintf("RESTORE DATABASE data FROM LATEST IN '%s' with detached, new_db_name=data2", localFoo)).Scan(&jobId)
-	jobutils.WaitForJobToPause(t, sqlDB, jobspb.JobID(jobId))
-	sqlDB.Exec(t, `SET CLUSTER SETTING jobs.debug.pausepoints = ''`)
-
-	sqlDB.Exec(t, fmt.Sprintf("RESUME JOB %d", jobId))
-	jobutils.WaitForJobToSucceed(t, sqlDB, jobspb.JobID(jobId))
-
-	// Ensure we only checked for span config conformance once.
-	query := fmt.Sprintf(`SELECT count(*) FROM system.job_message WHERE job_id = %d AND message = 'checking span config conformance'`, jobId)
-	sqlDB.CheckQueryResults(t, query, [][]string{{"1"}})
-
-	query2 := fmt.Sprintf(`SELECT count(*) FROM system.job_message WHERE job_id = %d AND message = 'span config conformance check completed'`, jobId)
-	sqlDB.CheckQueryResults(t, query2, [][]string{{"1"}})
 }

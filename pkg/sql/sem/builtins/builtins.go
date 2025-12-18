@@ -46,7 +46,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/randgen/randgencfg"
 	"github.com/cockroachdb/cockroach/pkg/sql/colexecerror"
-	"github.com/cockroachdb/cockroach/pkg/sql/hintpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/lex"
 	"github.com/cockroachdb/cockroach/pkg/sql/lexbase"
 	"github.com/cockroachdb/cockroach/pkg/sql/parserutils"
@@ -109,6 +108,7 @@ import (
 )
 
 var (
+	errEmptyInputString = pgerror.New(pgcode.InvalidParameterValue, "the input string must not be empty")
 	errZeroIP           = pgerror.New(pgcode.InvalidParameterValue, "zero length IP")
 	errChrValueTooSmall = pgerror.New(pgcode.InvalidParameterValue, "input value must be >= 0")
 	errChrValueTooLarge = pgerror.Newf(pgcode.InvalidParameterValue,
@@ -1321,7 +1321,7 @@ var regularBuiltins = map[string]builtinDefinition{
 				for _, ch := range s {
 					return tree.NewDInt(tree.DInt(ch)), nil
 				}
-				return tree.NewDInt(0), nil
+				return nil, errEmptyInputString
 			},
 			types.Int,
 			"Returns the character code of the first character in `val`. Despite the name, the function supports Unicode too.",
@@ -4747,8 +4747,37 @@ value if you rely on the HLC for accuracy.`,
 			Volatility: volatility.Volatile,
 		}),
 
-	"crdb_internal.datums_to_bytes":           datumsToBytes,
-	"information_schema.crdb_datums_to_bytes": datumsToBytes,
+	"crdb_internal.datums_to_bytes": makeBuiltin(
+		tree.FunctionProperties{
+			Category:             builtinconstants.CategorySystemInfo,
+			Undocumented:         true,
+			CompositeInsensitive: true,
+		},
+		tree.Overload{
+			// Note that datums_to_bytes(a) == datums_to_bytes(b) iff (a IS NOT DISTINCT FROM b)
+			Info: "Converts datums into key-encoded bytes. " +
+				"Supports NULLs and all data types which may be used in index keys",
+			Types:      tree.VariadicType{VarType: types.Any},
+			ReturnType: tree.FixedReturnType(types.Bytes),
+			Fn: func(_ context.Context, _ *eval.Context, args tree.Datums) (tree.Datum, error) {
+				var out []byte
+				for i, arg := range args {
+					var err error
+					out, err = keyside.Encode(out, arg, encoding.Ascending)
+					if err != nil {
+						return nil, pgerror.Newf(
+							pgcode.DatatypeMismatch,
+							"illegal argument %d of type %s",
+							i, arg.ResolvedType(),
+						)
+					}
+				}
+				return tree.NewDBytes(tree.DBytes(out)), nil
+			},
+			Volatility:        volatility.Immutable,
+			CalledOnNullInput: true,
+		},
+	),
 	"crdb_internal.merge_statement_stats": makeBuiltin(arrayProps(),
 		tree.Overload{
 			Types:      tree.ParamTypes{{Name: "input", Typ: types.JSONBArray}},
@@ -7865,9 +7894,6 @@ table's zone configuration this will return NULL.`,
 				if evalCtx.SQLStatsController == nil {
 					return nil, errors.AssertionFailedf("sql stats controller not set")
 				}
-				// The schema change below requires us to release our current timestamp, otherwise
-				// we may get stuck waiting for leases with locked leasing.
-				evalCtx.Planner.ResetLeaseTimestamp(ctx)
 				if err := evalCtx.SQLStatsController.ResetClusterSQLStats(ctx); err != nil {
 					return nil, err
 				}
@@ -7894,9 +7920,6 @@ table's zone configuration this will return NULL.`,
 				if evalCtx.SQLStatsController == nil {
 					return nil, errors.AssertionFailedf("sql stats controller not set")
 				}
-				// The schema change below requires us to release our current timestamp, otherwise
-				// we may get stuck waiting for leases.
-				evalCtx.Planner.ResetLeaseTimestamp(ctx)
 				if err := evalCtx.SQLStatsController.ResetActivityTables(ctx); err != nil {
 					return nil, err
 				}
@@ -9660,128 +9683,6 @@ WHERE object_id = table_descriptor_id
 				}
 				return tree.NewDLTree(lca), nil
 			},
-		},
-	),
-
-	"crdb_internal.inject_hint": makeBuiltin(
-		tree.FunctionProperties{
-			Category:         builtinconstants.CategorySystemInfo,
-			DistsqlBlocklist: true,
-		},
-		tree.Overload{
-			Types: tree.ParamTypes{
-				{Name: "statement_fingerprint", Typ: types.String},
-				{Name: "donor_sql", Typ: types.String},
-			},
-			ReturnType: tree.FixedReturnType(types.Int),
-			Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
-				stmtFingerprint := string(tree.MustBeDString(args[0]))
-				donorSQL := string(tree.MustBeDString(args[1]))
-
-				// Validate that the donor statement matches the target statement
-				// without hints.
-				fingerprintFlags := tree.FmtFlags(tree.QueryFormattingForFingerprintsMask.Get(
-					&evalCtx.Settings.SV,
-				))
-				stmts, err := parserutils.Parse(stmtFingerprint)
-				if err != nil {
-					return nil, pgerror.Wrap(
-						err, pgcode.InvalidParameterValue, "could not parse statement fingerprint",
-					)
-				}
-				if len(stmts) != 1 {
-					return nil, pgerror.New(
-						pgcode.InvalidParameterValue,
-						"could not parse statement fingerprint as a single SQL statement",
-					)
-				}
-				targetStmt := stmts[0]
-				stmts, err = parserutils.Parse(donorSQL)
-				if err != nil {
-					return nil, pgerror.Wrap(
-						err, pgcode.InvalidParameterValue, "could not parse hint donor statement",
-					)
-				}
-				if len(stmts) != 1 {
-					return nil, pgerror.New(
-						pgcode.InvalidParameterValue,
-						"could not parse hint donor statement as a single SQL statement",
-					)
-				}
-				donorStmt := stmts[0]
-				donor, err := tree.NewHintInjectionDonor(donorStmt.AST, fingerprintFlags)
-				if err != nil {
-					return nil, errors.NewAssertionErrorWithWrappedErrf(err, "error while creating donor")
-				}
-				if err := donor.Validate(targetStmt.AST, fingerprintFlags); err != nil {
-					return nil, pgerror.WithCandidateCode(err, pgcode.InvalidParameterValue)
-				}
-
-				// Do a trial hint injection to validate that the target statement gets
-				// rewritten into the donor statement.
-				result, _, err := donor.InjectHints(targetStmt.AST)
-				if err != nil {
-					return nil, pgerror.WithCandidateCode(err, pgcode.InvalidParameterValue)
-				}
-				// Either the target statement or the donor statement could be
-				// non-fingerprint or fingerprint, so for an apples-to-apples comparison
-				// we need to convert both to fingerprints.
-				resultFingerprint := tree.FormatStatementHideConstants(result, fingerprintFlags)
-				donorFingerprint := tree.FormatStatementHideConstants(donorStmt.AST, fingerprintFlags)
-				if resultFingerprint != donorFingerprint {
-					return nil, pgerror.Newf(
-						pgcode.InvalidParameterValue,
-						"could not validate that target statement is rewritten as donor statement (%s): %s",
-						donorFingerprint, resultFingerprint,
-					)
-				}
-
-				// Insert into statement_hints.
-				var hint hintpb.StatementHintUnion
-				hint.SetValue(&hintpb.InjectHints{DonorSQL: donorSQL})
-				hintID, err := evalCtx.Planner.InsertStatementHint(ctx, stmtFingerprint, hint)
-				if err != nil {
-					return nil, err
-				}
-				return tree.NewDInt(tree.DInt(hintID)), nil
-			},
-			Info: "This function is used to build a serialized statement hint to be inserted into" +
-				" the system.statement_hints table. It returns the hint ID of the newly created hint.",
-			Volatility: volatility.Volatile,
-		},
-	),
-	"crdb_internal.clear_statement_hints_cache": makeBuiltin(
-		tree.FunctionProperties{
-			Category:         builtinconstants.CategorySystemRepair,
-			Undocumented:     true,
-			DistsqlBlocklist: true, // applicable only on the gateway
-		},
-		tree.Overload{
-			Types:      tree.ParamTypes{},
-			ReturnType: tree.FixedReturnType(types.Void),
-			Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
-				evalCtx.Planner.ClearStatementHintsCache()
-				return tree.DVoidDatum, nil
-			},
-			Info:       `This function is used to clear the statement hints cache on the gateway node`,
-			Volatility: volatility.Volatile,
-		},
-	),
-	"crdb_internal.await_statement_hints_cache": makeBuiltin(
-		tree.FunctionProperties{
-			Category:         builtinconstants.CategorySystemRepair,
-			Undocumented:     true,
-			DistsqlBlocklist: true, // applicable only on the gateway
-		},
-		tree.Overload{
-			Types:      tree.ParamTypes{},
-			ReturnType: tree.FixedReturnType(types.Void),
-			Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
-				evalCtx.Planner.AwaitStatementHintsCache(ctx)
-				return tree.DVoidDatum, nil
-			},
-			Info:       `This function is used to await the statement hints cache on the gateway node`,
-			Volatility: volatility.Volatile,
 		},
 	),
 }
@@ -12880,37 +12781,5 @@ func exprSliceToStrSlice(exprs []tree.Expr) []string {
 		return tree.AsStringWithFlags(expr, tree.FmtBareStrings)
 	})
 }
-
-var datumsToBytes = makeBuiltin(
-	tree.FunctionProperties{
-		Category:             builtinconstants.CategorySystemInfo,
-		Undocumented:         true,
-		CompositeInsensitive: true,
-	},
-	tree.Overload{
-		// Note that datums_to_bytes(a) == datums_to_bytes(b) iff (a IS NOT DISTINCT FROM b)
-		Info: "Converts datums into key-encoded bytes. " +
-			"Supports NULLs and all data types which may be used in index keys",
-		Types:      tree.VariadicType{VarType: types.Any},
-		ReturnType: tree.FixedReturnType(types.Bytes),
-		Fn: func(_ context.Context, _ *eval.Context, args tree.Datums) (tree.Datum, error) {
-			var out []byte
-			for i, arg := range args {
-				var err error
-				out, err = keyside.Encode(out, arg, encoding.Ascending)
-				if err != nil {
-					return nil, pgerror.Newf(
-						pgcode.DatatypeMismatch,
-						"illegal argument %d of type %s",
-						i, arg.ResolvedType(),
-					)
-				}
-			}
-			return tree.NewDBytes(tree.DBytes(out)), nil
-		},
-		Volatility:        volatility.Immutable,
-		CalledOnNullInput: true,
-	},
-)
 
 var nilRegionsError = errors.AssertionFailedf("evalCtx.Regions is nil")

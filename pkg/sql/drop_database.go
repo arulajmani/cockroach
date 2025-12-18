@@ -201,9 +201,6 @@ func (n *dropDatabaseNode) startExec(params runParams) error {
 		p.Descriptors(),
 		&p.ExecCfg().Settings.SV,
 		p.SessionData(),
-		p.ExecCfg().Settings,
-		p.ExecCfg().JobsKnobs(),
-		p.ExecCfg().NodeInfo.LogicalClusterID(),
 	)
 
 	err := metadataUpdater.DeleteDatabaseRoleSettings(ctx, n.dbDesc.GetID())

@@ -9,15 +9,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/url"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/backup/backuppb"
 	"github.com/cockroachdb/cockroach/pkg/backup/backupsink"
-	"github.com/cockroachdb/cockroach/pkg/cloud"
-	"github.com/cockroachdb/cockroach/pkg/cloud/externalconn"
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
@@ -308,10 +304,6 @@ func sendAddRemoteSSTWorker(
 	approxDataSize *int64,
 ) func(context.Context) error {
 	return func(ctx context.Context) error {
-		testingKnobs := execCtx.ExecCfg().BackupRestoreTestingKnobs
-
-		extConnCache := make(map[string]externalconn.ExternalConnection)
-
 		for entry := range restoreSpanEntriesCh {
 			log.Dev.VInfof(ctx, 1, "starting restore of backed up span %s containing %d files", entry.Span, len(entry.Files))
 
@@ -348,49 +340,8 @@ func sendAddRemoteSSTWorker(
 
 				log.Dev.VInfof(ctx, 1, "restoring span %s of file %s (file span: %s)", restoringSubspan, file.Path, file.BackupFileEntrySpan)
 				file.BackupFileEntrySpan = restoringSubspan
-
-				// swap out any external connections for their underlying uris and revalidate
-				uri, err := url.Parse(file.Dir.URI)
-				if err != nil {
-					return errors.Wrap(err, "invalid URI")
-				}
-				if uri.Scheme == externalconn.Scheme {
-					var ec externalconn.ExternalConnection
-					var ok bool
-					if ec, ok = extConnCache[uri.Host]; !ok {
-						if err := execCtx.ExecCfg().InternalDB.Txn(ctx, func(ctx context.Context, t isql.Txn) error {
-							ec, err = externalconn.LoadExternalConnection(ctx, uri.Host, t)
-							if err != nil {
-								return err
-							}
-							extConnCache[uri.Host] = ec
-							return nil
-						}); err != nil {
-							return errors.Wrap(err, "failed to load external connection")
-						}
-					}
-
-					materialized, err := externalconn.Materialize(ec, uri)
-					if err != nil {
-						return errors.Wrap(err, "failed to materialize external connection URI")
-					}
-					// revalidate in case the user changed the underlying uri in the external connection
-					// to a non early boot uri since the job was created
-					if err := cloud.SchemeSupportsEarlyBoot(materialized.Scheme); err != nil {
-						return errors.Wrap(err, "backup URI not supported for online restore")
-					}
-
-					file.Dir.URI = materialized.String()
-				}
-
 				if err := sendRemoteAddSSTable(ctx, execCtx, file, entry.ElidedPrefix, fromSystemTenant); err != nil {
 					return err
-				}
-
-				if testingKnobs != nil && testingKnobs.AfterAddRemoteSST != nil {
-					if err := testingKnobs.AfterAddRemoteSST(); err != nil {
-						return err
-					}
 				}
 			}
 
@@ -437,16 +388,8 @@ func sendAdminScatter(
 	ctx, sp := tracing.ChildSpan(ctx, "backup.sendAdminScatter")
 	defer sp.Finish()
 
-	// To obey the golden rule of never scattering non-empty ranges, we set a
-	// maxSize of 1 here. The link phase should generally only ever be scattering
-	// empty ranges, but since the link phase can retry, we may end up attempting
-	// to scatter a range that contains external SSTs. If a scatter request fails
-	// due to the range being non-empty, we can ignore the error.
-	const maxSize = 1
+	const maxSize = 4 << 20
 	_, err := execCtx.ExecCfg().DB.AdminScatter(ctx, scatterKey, maxSize)
-	if err == nil || strings.Contains(err.Error(), "existing range size") {
-		return nil
-	}
 	return err
 }
 
@@ -800,7 +743,7 @@ func (r *restoreResumer) waitForDownloadToComplete(
 		r.downloadJobProg = fractionComplete
 
 		if remaining == 0 {
-			r.notifyStatsRefresherOfNewTables(ctx)
+			r.notifyStatsRefresherOfNewTables()
 			return nil
 		}
 
@@ -1120,32 +1063,4 @@ func getNumOnlineRestoreLinkWorkers(ctx context.Context, execCtx sql.JobExecCont
 	}
 	numNodes := max(len(sqlInstanceIDs), 1)
 	return defaultLinkWorkersPerNode * numNodes, nil
-}
-
-// uriCompatibleWithOnlineRestore validates that a uri scheme is supported for early boot.
-// additionally, if an external connection uri is passed, the underlying uri the
-// external connection points to will be loaded from the system table and validated
-func uriCompatibleWithOnlineRestore(ctx context.Context, txn isql.Txn, path string) error {
-	uri, err := url.Parse(path)
-	if err != nil {
-		return errors.Wrap(err, "failed to parse URI for online restore")
-	}
-	scheme := uri.Scheme
-	if scheme == externalconn.Scheme {
-		// online restore materializes external connections late and does not support certain schemes,
-		// so we need to validate that the underlying uri has a supported scheme
-		ec, err := externalconn.LoadExternalConnection(ctx, uri.Host, txn)
-		if err != nil {
-			return errors.Wrap(err, "failed to load external connection")
-		}
-		materialized, err := externalconn.Materialize(ec, uri)
-		if err != nil {
-			return err
-		}
-		scheme = materialized.Scheme
-	}
-	if err := cloud.SchemeSupportsEarlyBoot(scheme); err != nil {
-		return errors.Wrap(err, "backup URI not supported for online restore")
-	}
-	return nil
 }

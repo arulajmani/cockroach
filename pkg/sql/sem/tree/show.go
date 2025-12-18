@@ -538,25 +538,16 @@ type ShowJobOptions struct {
 	// execution. These details will provide improved observability into the
 	// execution of the job.
 	ExecutionDetails bool
-	// ResolvedTimestamp, if true, will render the resolved timestamp of the job.
-	ResolvedTimestamp bool
 }
 
 func (s *ShowJobOptions) Format(ctx *FmtCtx) {
 	if s.ExecutionDetails {
 		ctx.WriteString(" EXECUTION DETAILS")
 	}
-	if s.ResolvedTimestamp {
-		if s.ExecutionDetails {
-			ctx.WriteString(",")
-		}
-		ctx.WriteString(" RESOLVED TIMESTAMP")
-	}
 }
 
 func (s *ShowJobOptions) CombineWith(other *ShowJobOptions) error {
-	s.ExecutionDetails = s.ExecutionDetails || other.ExecutionDetails
-	s.ResolvedTimestamp = s.ResolvedTimestamp || other.ResolvedTimestamp
+	s.ExecutionDetails = other.ExecutionDetails
 	return nil
 }
 
@@ -566,9 +557,6 @@ var _ NodeFormatter = &ShowJobOptions{}
 type ShowChangefeedJobs struct {
 	// If non-nil, a select statement that provides the job ids to be shown.
 	Jobs *Select
-
-	// If true, include full table names in the output.
-	IncludeWatchedTables bool
 }
 
 // Format implements the NodeFormatter interface.
@@ -577,9 +565,6 @@ func (node *ShowChangefeedJobs) Format(ctx *FmtCtx) {
 	if node.Jobs != nil {
 		ctx.WriteString(" ")
 		ctx.FormatNode(node.Jobs)
-	}
-	if node.IncludeWatchedTables {
-		ctx.WriteString(" WITH WATCHED_TABLES")
 	}
 }
 
@@ -1166,25 +1151,19 @@ func (node *ShowRangeForRow) Format(ctx *FmtCtx) {
 
 // ShowFingerprints represents a SHOW EXPERIMENTAL_FINGERPRINTS statement.
 type ShowFingerprints struct {
-	TenantSpec   *TenantSpec
-	Table        *UnresolvedObjectName
-	Experimental bool
+	TenantSpec *TenantSpec
+	Table      *UnresolvedObjectName
 
 	Options ShowFingerprintOptions
 }
 
 // Format implements the NodeFormatter interface.
 func (node *ShowFingerprints) Format(ctx *FmtCtx) {
-	if node.Experimental {
-		ctx.WriteString("SHOW EXPERIMENTAL_FINGERPRINTS ")
-	} else {
-		ctx.WriteString("SHOW FINGERPRINTS ")
-	}
 	if node.Table != nil {
-		ctx.WriteString("FROM TABLE ")
+		ctx.WriteString("SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE ")
 		ctx.FormatNode(node.Table)
 	} else {
-		ctx.WriteString("FROM VIRTUAL CLUSTER ")
+		ctx.WriteString("SHOW EXPERIMENTAL_FINGERPRINTS FROM VIRTUAL CLUSTER ")
 		ctx.FormatNode(node.TenantSpec)
 	}
 

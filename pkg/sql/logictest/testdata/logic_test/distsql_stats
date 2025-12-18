@@ -35,7 +35,7 @@ query TTTI colnames,rowsort
 SELECT start_key, end_key, replicas, lease_holder FROM [SHOW RANGES FROM TABLE data WITH DETAILS]
 ----
 start_key           end_key       replicas  lease_holder
-<before:/Table/XX>  …/1/1         {1}       1
+<before:/Table/76>  …/1/1         {1}       1
 …/1/1               …/1/2         {2}       2
 …/1/2               …/1/3         {3}       3
 …/1/3               …/1/4         {4}       4
@@ -1900,14 +1900,14 @@ ALTER TABLE greeting_stats INJECT STATISTICS '$stats'
 query T
 SELECT feature_name FROM crdb_internal.feature_usage
 WHERE feature_name in ('job.typedesc_schema_change.successful',
-'job.new_schema_change.successful',
+'job.schema_change.successful',
 'job.create_stats.successful',
 'job.auto_create_stats.successful') AND
 usage_count > 0
 ORDER BY feature_name DESC
 ----
 job.typedesc_schema_change.successful
-job.new_schema_change.successful
+job.schema_change.successful
 job.create_stats.successful
 job.auto_create_stats.successful
 

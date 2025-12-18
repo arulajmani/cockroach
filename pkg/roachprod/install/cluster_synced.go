@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	cloudcluster "github.com/cockroachdb/cockroach/pkg/roachprod/cloud/types"
+	"github.com/cockroachdb/cockroach/pkg/roachprod/cloud"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/config"
 	rperrors "github.com/cockroachdb/cockroach/pkg/roachprod/errors"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/logger"
@@ -66,7 +66,7 @@ var scpTimeout = func() time.Duration {
 // components.
 type SyncedCluster struct {
 	// Cluster metadata, obtained from the respective cloud provider.
-	cloudcluster.Cluster
+	cloud.Cluster
 
 	// Nodes is used by most commands (e.g. Start, Stop, Monitor). It describes
 	// the list of nodes the operation pertains to.
@@ -93,7 +93,7 @@ type SyncedCluster struct {
 //
 // See ListNodes for a description of the node selector string.
 func NewSyncedCluster(
-	metadata *cloudcluster.Cluster, nodeSelector string, settings ClusterSettings,
+	metadata *cloud.Cluster, nodeSelector string, settings ClusterSettings,
 ) (*SyncedCluster, error) {
 	c := &SyncedCluster{
 		Cluster:         *metadata,
@@ -1085,10 +1085,7 @@ func (c *SyncedCluster) Wait(ctx context.Context, l *logger.Logger) error {
 		func(ctx context.Context, node Node) (*RunResultDetails, error) {
 			res := &RunResultDetails{Node: node}
 			var err error
-			// Only the `vm.OSInitializedFile` file is checked and not the
-			// `vm.DisksInitializedFile`, because it's possible to create VMs without
-			// any attached disks other than the boot disk.
-			cmd := fmt.Sprintf("test -e %s", vm.OSInitializedFile)
+			cmd := fmt.Sprintf("test -e %s -a -e %s", vm.DisksInitializedFile, vm.OSInitializedFile)
 			// N.B. we disable ssh debug output capture, lest we end up with _thousands_ of useless .log files.
 			opts := cmdOptsWithDebugDisabled()
 			for j := 0; j < 600; j++ {
@@ -2304,7 +2301,7 @@ func (c *SyncedCluster) pgurls(
 		if err != nil {
 			return nil, err
 		}
-		m[node] = c.NodeURL(host, desc.Port, virtualClusterName, desc.ServiceMode, DefaultAuthMode(), "" /* database */, false /* disallowUnsafeInternals */)
+		m[node] = c.NodeURL(host, desc.Port, virtualClusterName, desc.ServiceMode, DefaultAuthMode(), "" /* database */)
 	}
 	return m, nil
 }
@@ -2347,7 +2344,7 @@ func (c *SyncedCluster) loadBalancerURL(
 	if err != nil {
 		return "", err
 	}
-	loadBalancerURL := c.NodeURL(address.IP, address.Port, virtualClusterName, descs[0].ServiceMode, auth, "" /* database */, false /* disallowUnsafeInternals */)
+	loadBalancerURL := c.NodeURL(address.IP, address.Port, virtualClusterName, descs[0].ServiceMode, auth, "" /* database */)
 	return loadBalancerURL, nil
 }
 

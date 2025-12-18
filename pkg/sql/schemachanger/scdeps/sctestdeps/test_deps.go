@@ -1341,22 +1341,6 @@ func (s *TestState) UpdateTTLScheduleLabel(ctx context.Context, tbl catalog.Tabl
 	return nil
 }
 
-// UpdateTTLScheduleCron implements scexec.DescriptorMetadataUpdater
-func (s *TestState) UpdateTTLScheduleCron(
-	ctx context.Context, scheduleID jobspb.ScheduleID, cronExpr string,
-) error {
-	s.LogSideEffectf("update ttl schedule cron #%d to %q", scheduleID, cronExpr)
-	return nil
-}
-
-// CreateRowLevelTTLSchedule implements scexec.DescriptorMetadataUpdater
-func (s *TestState) CreateRowLevelTTLSchedule(
-	ctx context.Context, tbl catalog.TableDescriptor,
-) error {
-	s.LogSideEffectf("create row-level TTL schedule for table #%d", tbl.GetID())
-	return nil
-}
-
 // DescriptorMetadataUpdater implement scexec.Dependencies.
 func (s *TestState) DescriptorMetadataUpdater(
 	ctx context.Context,
@@ -1409,7 +1393,10 @@ func (s *TestState) ResolveFunction(
 	if err != nil {
 		return nil, err
 	}
-	fd := tree.GetBuiltinFuncDefinition(fnName, path)
+	fd, err := tree.GetBuiltinFuncDefinition(fnName, path)
+	if err != nil {
+		return nil, err
+	}
 	if fd != nil {
 		return fd, nil
 	}
@@ -1559,21 +1546,8 @@ func getNameEntryDescriptorType(parentID, parentSchemaID descpb.ID) string {
 }
 
 // InitializeSequence is part of the scexec.Catalog interface.
-func (s *TestState) InitializeSequence(ctx context.Context, id descpb.ID, startVal int64) error {
+func (s *TestState) InitializeSequence(id descpb.ID, startVal int64) {
 	s.LogSideEffectf("initializing sequence %d with starting value of %d", id, startVal)
-	return nil
-}
-
-func (s *TestState) SetSequence(ctx context.Context, seq *scexec.SequenceToSet) error {
-	s.LogSideEffectf("sequence %d value to %d", seq.ID, seq.Value)
-	return nil
-}
-
-func (s *TestState) MaybeUpdateSequenceValue(
-	ctx context.Context, seq *scexec.SequenceToMaybeUpdate,
-) error {
-	s.LogSideEffectf("sequence %d value may be updated", seq.ID)
-	return nil
 }
 
 // CheckMaxSchemaObjects is part of the scexec.Catalog interface.

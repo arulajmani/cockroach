@@ -107,7 +107,6 @@ type discard struct{}
 
 var _ objstorage.Writable = discard{}
 
-func (discard) StartMetadataPortion() error { return nil }
-func (discard) Write(p []byte) error        { return nil }
-func (discard) Finish() error               { return nil }
-func (discard) Abort()                      {}
+func (discard) Write(p []byte) error { return nil }
+func (discard) Finish() error        { return nil }
+func (discard) Abort()               {}

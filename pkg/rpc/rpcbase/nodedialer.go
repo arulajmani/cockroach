@@ -29,7 +29,7 @@ var ExperimentalDRPCEnabled = settings.RegisterBoolSetting(
 
 // TODODRPC is a marker to identify sites that needs to be updated to support
 // DRPC.
-const TODODRPC = true
+const TODODRPC = false
 
 // NodeDialer interface defines methods for dialing peer nodes using their
 // node IDs.

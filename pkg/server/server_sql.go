@@ -311,8 +311,6 @@ type sqlServerArgs struct {
 	// Used by the span config reconciliation job.
 	spanConfigAccessor spanconfig.KVAccessor
 
-	spanConfigReporter spanconfig.Reporter
-
 	// Used by the Key Visualizer job.
 	keyVisServerAccessor *spanstatskvaccessor.SpanStatsKVAccessor
 
@@ -1272,6 +1270,7 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 		var c upgrade.Cluster
 		var systemDeps upgrade.SystemDeps
 		keyVisKnobs, _ := cfg.TestingKnobs.KeyVisualizer.(*keyvisualizer.TestingKnobs)
+		sqlStatsKnobs, _ := cfg.TestingKnobs.SQLStatsKnobs.(*sqlstats.TestingKnobs)
 		upgradeKnobs, _ := cfg.TestingKnobs.UpgradeManager.(*upgradebase.TestingKnobs)
 		if codec.ForSystemTenant() {
 			c = upgradecluster.New(upgradecluster.ClusterConfig{
@@ -1297,6 +1296,7 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 			JobRegistry:        jobRegistry,
 			Stopper:            cfg.stopper,
 			KeyVisKnobs:        keyVisKnobs,
+			SQLStatsKnobs:      sqlStatsKnobs,
 			TenantInfoAccessor: cfg.tenantConnect,
 			TestingKnobs:       upgradeKnobs,
 		}
@@ -1312,7 +1312,7 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 
 	// Instantiate a span config manager.
 	spanConfig.sqlTranslatorFactory = spanconfigsqltranslator.NewFactory(
-		execCfg.ProtectedTimestampProvider, codec, cfg.Settings, spanConfigKnobs,
+		execCfg.ProtectedTimestampProvider, codec, spanConfigKnobs,
 	)
 	spanConfig.sqlWatcher = spanconfigsqlwatcher.New(
 		codec,
@@ -1347,7 +1347,6 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 	execCfg.SpanConfigKVAccessor = cfg.spanConfigAccessor
 	execCfg.SpanConfigLimiter = spanConfig.limiter
 	execCfg.SpanConfigSplitter = spanConfig.splitter
-	execCfg.SpanConfigReporter = cfg.spanConfigReporter
 
 	var waitForInstanceReaderStarted func(context.Context) error
 	if cfg.sqlInstanceReader != nil {
@@ -1771,12 +1770,13 @@ func (s *SQLServer) preStart(
 	// node. This also uses SQL.
 	s.leaseMgr.DeleteOrphanedLeases(ctx, orphanedLeasesTimeThresholdNanos, s.execCfg.Locality)
 
-	stmtdiagnostics.StartPolling(ctx, s.txnDiagnosticsRegistry, s.stmtDiagnosticsRegistry, stopper)
-
-	if err := s.execCfg.TableStatsCache.Start(ctx, s.execCfg.Codec, s.execCfg.RangeFeedFactory, s.execCfg.SystemTableIDResolver); err != nil {
+	if err := s.statsRefresher.Start(ctx, stopper, stats.DefaultRefreshInterval); err != nil {
 		return err
 	}
-	if err := s.statsRefresher.Start(ctx, stopper, stats.DefaultRefreshInterval); err != nil {
+
+	stmtdiagnostics.StartPolling(ctx, s.txnDiagnosticsRegistry, s.stmtDiagnosticsRegistry, stopper)
+
+	if err := s.execCfg.TableStatsCache.Start(ctx, s.execCfg.Codec, s.execCfg.RangeFeedFactory); err != nil {
 		return err
 	}
 	if err = s.execCfg.StatementHintsCache.Start(ctx, s.execCfg.SystemTableIDResolver); err != nil {

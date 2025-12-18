@@ -200,29 +200,26 @@ func (ds *ServerImpl) setupFlow(
 	var sp *tracing.Span                       // will be Finish()ed by Flow.Cleanup()
 	var monitor, diskMonitor *mon.BytesMonitor // will be closed in Flow.Cleanup()
 	var onFlowCleanupEnd func(context.Context) // will be called at the very end of Flow.Cleanup()
-	var cleanupPerformed bool
 	// Make sure that we clean up all resources (which in the happy case are
 	// cleaned up in Flow.Cleanup()) if an error is encountered.
 	defer func() {
 		if retErr != nil {
-			if !cleanupPerformed {
-				if monitor != nil {
-					monitor.Stop(ctx)
-				}
-				if diskMonitor != nil {
-					diskMonitor.Stop(ctx)
-				}
-				if onFlowCleanupEnd != nil {
-					onFlowCleanupEnd(ctx)
-				} else {
-					reserved.Close(ctx)
-					onFlowCleanup.Do()
-				}
-				// We finish the span after performing other cleanup in case that
-				// cleanup accesses the context with the span.
-				if sp != nil {
-					sp.Finish()
-				}
+			if monitor != nil {
+				monitor.Stop(ctx)
+			}
+			if diskMonitor != nil {
+				diskMonitor.Stop(ctx)
+			}
+			if onFlowCleanupEnd != nil {
+				onFlowCleanupEnd(ctx)
+			} else {
+				reserved.Close(ctx)
+				onFlowCleanup.Do()
+			}
+			// We finish the span after performing other cleanup in case that
+			// cleanup accesses the context with the span.
+			if sp != nil {
+				sp.Finish()
 			}
 			retCtx = tracing.ContextWithSpan(ctx, nil)
 		}
@@ -270,9 +267,6 @@ func (ds *ServerImpl) setupFlow(
 	makeLeaf := func(ctx context.Context) (*kv.Txn, error) {
 		tis := req.LeafTxnInputState
 		if tis == nil {
-			if localState.Txn != nil {
-				return nil, errors.AssertionFailedf("nil LeafTxnInputState when trying to create the LeafTxn")
-			}
 			// This must be a flow running for some bulk-io operation that doesn't use
 			// a txn.
 			return nil, nil
@@ -453,12 +447,6 @@ func (ds *ServerImpl) setupFlow(
 		if leafTxn == nil {
 			leafTxn, err = makeLeaf(ctx)
 			if err != nil {
-				// Given that we've already fully set up the flow, we must do
-				// the full cleanup. This supersedes the cleanup done in the
-				// defer at the beginning of the method, so we mark
-				// cleanupPerformed accordingly.
-				f.Cleanup(ctx)
-				cleanupPerformed = true
 				return nil, nil, nil, err
 			}
 		}
@@ -506,13 +494,7 @@ func (ds *ServerImpl) newFlowContext(
 		DiskMonitor:    diskMonitor,
 	}
 
-	// Don't reuse the collection when we're running a parallel check off the
-	// main goroutine - in this case we might have multiple goroutines using the
-	// collection concurrently, so we choose to create a fresh one. The parallel
-	// check running on the main goroutine can keep on using the planner's one.
-	reuseCollection := localState.ParallelCheckMainGoroutine || // on main goroutine
-		localState.GetConcurrency()&ConcurrencyParallelChecks == 0 // not a parallel check
-	if localState.IsLocal && localState.Collection != nil && reuseCollection {
+	if localState.IsLocal && localState.Collection != nil {
 		// If we were passed a descs.Collection to use, then take it. In this
 		// case, the caller will handle releasing the used descriptors, so we
 		// don't need to clean up the descriptors when cleaning up the flow.
@@ -590,11 +572,6 @@ type LocalState struct {
 	// concurrency tracks the types of concurrency present when accessing the
 	// Txn.
 	concurrency ConcurrencyKind
-
-	// ParallelCheckMainGoroutine, if set, indicates that this plan is part of
-	// parallel checks and is run on the main goroutine (i.e. the one that
-	// executed the main plan of the query).
-	ParallelCheckMainGoroutine bool
 
 	// Txn is filled in on the gateway only. It is the RootTxn that the query is running in.
 	// This will be used directly by the flow if the flow has no concurrency and IsLocal is set.

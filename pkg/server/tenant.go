@@ -485,7 +485,7 @@ func newTenantServer(
 		gw.RegisterService(args.grpc.Server)
 	}
 
-	for _, s := range []drpcServiceRegistrar{sAdmin, sStatus, args.tenantTimeSeriesServer} {
+	for _, s := range []drpcServiceRegistrar{sAdmin, sStatus, sAuth, args.tenantTimeSeriesServer} {
 		if err := s.RegisterDRPCService(args.drpc); err != nil {
 			return nil, err
 		}
@@ -636,6 +636,7 @@ func (s *SQLServerWrapper) PreStart(ctx context.Context) error {
 		s.sqlServer.cfg.AmbientCtx,
 		s.rpcContext,
 		s.stopper,
+		s.grpc,
 		s.sqlServer.cfg.AdvertiseAddr,
 	)
 	if err != nil {
@@ -825,9 +826,7 @@ func (s *SQLServerWrapper) PreStart(ctx context.Context) error {
 	}
 
 	var apiInternalServer http.Handler
-	var drpcEnabled = false
 	if rpcbase.TODODRPC && rpcbase.DRPCEnabled(ctx, s.cfg.Settings) {
-		drpcEnabled = true
 		// Pass our own instance ID to connect to local RPC servers
 		apiInternalServer, err = apiinternal.NewAPIInternalServer(ctx,
 			s.sqlServer.sqlInstanceDialer,
@@ -852,6 +851,7 @@ func (s *SQLServerWrapper) PreStart(ctx context.Context) error {
 		s.adminAuthzCheck,            /* adminAuthzCheck */
 		s.recorder,                   /* metricSource */
 		s.runtime,                    /* runtimeStatsSampler */
+		gwMux,                        /* unauthenticatedGWMux */
 		apiInternalServer,            /* unauthenticatedAPIInternalServer */
 		s.debug,                      /* handleDebugUnauthenticated */
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -869,7 +869,6 @@ func (s *SQLServerWrapper) PreStart(ctx context.Context) error {
 				s.sqlServer.serviceMode == mtinfopb.ServiceModeShared,
 			DisableKvLevelAdvancedDebug: s.sqlServer.serviceMode != mtinfopb.ServiceModeShared,
 		},
-		drpcEnabled,
 	); err != nil {
 		return err
 	}
@@ -1331,14 +1330,11 @@ func makeTenantSQLServerArgs(
 	externalStorage := esb.makeExternalStorage
 	externalStorageFromURI := esb.makeExternalStorageFromURI
 
-	requestMetrics := rpc.NewRequestMetrics()
-	registry.AddMetricStruct(requestMetrics)
-
-	grpcServer, err := newGRPCServer(startupCtx, rpcContext, requestMetrics)
+	grpcServer, err := newGRPCServer(startupCtx, rpcContext, registry)
 	if err != nil {
 		return sqlServerArgs{}, err
 	}
-	drpcServer, err := newDRPCServer(startupCtx, rpcContext, requestMetrics)
+	drpcServer, err := newDRPCServer(startupCtx, rpcContext)
 	if err != nil {
 		return sqlServerArgs{}, err
 	}
@@ -1388,7 +1384,6 @@ func makeTenantSQLServerArgs(
 		nodeDescs:                tenantConnect,
 		systemConfigWatcher:      systemConfigWatcher,
 		spanConfigAccessor:       tenantConnect,
-		spanConfigReporter:       tenantConnect,
 		kvNodeDialer:             kvNodeDialer,
 		distSender:               ds,
 		db:                       db,

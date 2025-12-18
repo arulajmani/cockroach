@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
+	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/col/coldata"
 	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvclient/rangecache"
@@ -460,9 +461,13 @@ func (dsp *DistSQLPlanner) setupFlows(
 	if len(statementSQL) > setupFlowRequestStmtMaxLength {
 		statementSQL = statementSQL[:setupFlowRequestStmtMaxLength]
 	}
+	v := execversion.V25_2
+	if dsp.st.Version.IsActive(ctx, clusterversion.V25_4) {
+		v = execversion.V25_4
+	}
 	setupReq := execinfrapb.SetupFlowRequest{
 		LeafTxnInputState: leafInputState,
-		Version:           execversion.V25_4,
+		Version:           v,
 		TraceKV:           recv.tracing.KVTracingEnabled(),
 		CollectStats:      planCtx.collectExecStats,
 		StatementSQL:      statementSQL,
@@ -750,7 +755,6 @@ func (dsp *DistSQLPlanner) Run(
 	localState.EvalContext = evalCtx
 	localState.IsLocal = planCtx.isLocal
 	localState.AddConcurrency(planCtx.flowConcurrency)
-	localState.ParallelCheckMainGoroutine = planCtx.parallelCheckMainGoroutine
 	localState.Txn = txn
 	localState.LocalProcs = plan.LocalProcessors
 	localState.LocalVectorSources = plan.LocalVectorSources
@@ -1619,9 +1623,6 @@ func forwardInnerQueryStats(f metadataForwarder, stats topLevelQueryStats) {
 	meta.Metrics.BytesRead = stats.bytesRead
 	meta.Metrics.RowsRead = stats.rowsRead
 	meta.Metrics.RowsWritten = stats.rowsWritten
-	meta.Metrics.IndexRowsWritten = stats.indexRowsWritten
-	meta.Metrics.IndexBytesWritten = stats.indexBytesWritten
-	meta.Metrics.KVCPUTime = int64(stats.kvCPUTimeNanos)
 	// stats.networkEgressEstimate and stats.clientTime are ignored since they
 	// only matter at the "true" top-level query (and actually should be zero
 	// here anyway).
@@ -1672,7 +1673,6 @@ func (r *DistSQLReceiver) pushMeta(meta *execinfrapb.ProducerMetadata) execinfra
 		r.stats.rowsWritten += meta.Metrics.RowsWritten
 		r.stats.indexRowsWritten += meta.Metrics.IndexRowsWritten
 		r.stats.indexBytesWritten += meta.Metrics.IndexBytesWritten
-		r.stats.kvCPUTimeNanos += time.Duration(meta.Metrics.KVCPUTime)
 
 		if sm, ok := r.scanStageEstimateMap[meta.Metrics.StageID]; ok {
 			sm.rowsRead += uint64(meta.Metrics.RowsRead)
@@ -2547,7 +2547,7 @@ func (dsp *DistSQLPlanner) PlanAndRunPostQueries(
 						planner,
 						evalCtxFactory(false /* usedConcurrently */),
 						recv,
-						sequentialPostquery,
+						false, /* parallelCheck */
 						defaultGetSaveFlowsFunc,
 						planner.instrumentation.getAssociateNodeWithComponentsFn(),
 						recv.stats.add,
@@ -2655,7 +2655,7 @@ func (dsp *DistSQLPlanner) planAndRunCascadeOrTrigger(
 		planner,
 		evalCtx,
 		recv,
-		sequentialPostquery,
+		false, /* parallelCheck */
 		defaultGetSaveFlowsFunc,
 		planner.instrumentation.getAssociateNodeWithComponentsFn(),
 		recv.stats.add,
@@ -2721,21 +2721,13 @@ var parallelChecksConcurrencyLimit = settings.RegisterIntSetting(
 	settings.NonNegativeInt,
 )
 
-type postqueryInfo byte
-
-const (
-	sequentialPostquery postqueryInfo = iota
-	parallelCheckMainGoroutine
-	parallelCheckWorkerGoroutine
-)
-
 // planAndRunPostquery runs a cascade or check query. Can be safe for concurrent
 // use if parallelCheck is true.
 //
-// - postqueryInfo indicates whether this is a check query that runs in parallel
-// with other check queries. If parallelCheck is not sequentialPostquery, then
-// getSaveFlowsFunc, associateNodeWithComponents, and addTopLevelQueryStats must
-// be concurrency-safe (if non-nil).
+// - parallelCheck indicates whether this is a check query that runs in parallel
+// with other check queries. If parallelCheck is true, then getSaveFlowsFunc,
+// associateNodeWithComponents, and addTopLevelQueryStats must be
+// concurrency-safe (if non-nil).
 // - getSaveFlowsFunc will only be called if
 // planner.instrumentation.ShouldSaveFlows() returns true.
 func (dsp *DistSQLPlanner) planAndRunPostquery(
@@ -2744,7 +2736,7 @@ func (dsp *DistSQLPlanner) planAndRunPostquery(
 	planner *planner,
 	evalCtx *extendedEvalContext,
 	recv *DistSQLReceiver,
-	postqueryInfo postqueryInfo,
+	parallelCheck bool,
 	getSaveFlowsFunc func() SaveFlowsFunc,
 	associateNodeWithComponents func(exec.Node, execComponents),
 	addTopLevelQueryStats func(stats *topLevelQueryStats),
@@ -2766,9 +2758,8 @@ func (dsp *DistSQLPlanner) planAndRunPostquery(
 	}
 	postqueryPlanCtx.associateNodeWithComponents = associateNodeWithComponents
 	postqueryPlanCtx.collectExecStats = planner.instrumentation.ShouldCollectExecStats()
-	if postqueryInfo != sequentialPostquery {
+	if parallelCheck {
 		postqueryPlanCtx.flowConcurrency = distsql.ConcurrencyParallelChecks
-		postqueryPlanCtx.parallelCheckMainGoroutine = postqueryInfo == parallelCheckMainGoroutine
 	}
 
 	postqueryPhysPlan, physPlanCleanup, err := dsp.createPhysPlan(ctx, postqueryPlanCtx, postqueryPlan)
@@ -2874,14 +2865,14 @@ func (dsp *DistSQLPlanner) planAndRunChecksInParallel(
 	// needed in order to return the error for the "earliest" plan (which makes
 	// the tests deterministic when multiple checks fail).
 	errs := make([]error, len(checkPlans))
-	runCheck := func(ctx context.Context, checkPlanIdx int, postqueryInfo postqueryInfo) {
+	runCheck := func(ctx context.Context, checkPlanIdx int) {
 		log.VEventf(ctx, 3, "begin check %d", checkPlanIdx)
 		errs[checkPlanIdx] = dsp.planAndRunPostquery(
 			ctx, checkPlans[checkPlanIdx].plan,
 			planner,
 			evalCtxFactory(true /* usedConcurrently */),
 			recv,
-			postqueryInfo,
+			true, /* parallelCheck */
 			getSaveFlowsFunc,
 			associateNodeWithComponents,
 			addTopLevelQueryStats,
@@ -2931,7 +2922,7 @@ func (dsp *DistSQLPlanner) planAndRunChecksInParallel(
 			},
 			func(ctx context.Context) {
 				defer wg.Done()
-				runCheck(ctx, checkPlanIdx, parallelCheckWorkerGoroutine)
+				runCheck(ctx, checkPlanIdx)
 			}); err != nil {
 			// The server is quiescing, so we just make sure to wait for all
 			// already started checks to complete after canceling them.
@@ -2945,7 +2936,7 @@ func (dsp *DistSQLPlanner) planAndRunChecksInParallel(
 	}
 	// Execute all other checks serially in the current goroutine.
 	for checkPlanIdx := numParallelChecks; checkPlanIdx < len(checkPlans); checkPlanIdx++ {
-		runCheck(ctx, checkPlanIdx, parallelCheckMainGoroutine)
+		runCheck(ctx, checkPlanIdx)
 	}
 	// Wait for all concurrent checks to complete and return the error from the
 	// earliest check (if there were any errors).

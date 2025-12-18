@@ -22,7 +22,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql/isql"
-	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/cockroach/pkg/util/ioctx"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
@@ -112,10 +111,14 @@ type RegisteredProvider struct {
 
 // SchemeSupportsEarlyBoot returns an error if the scheme of the
 // provided URL has a provider that can't be used during early boot.
-func SchemeSupportsEarlyBoot(scheme string) error {
-	_, ok := earlyBootConfParsers[scheme]
+func SchemeSupportsEarlyBoot(path string) error {
+	uri, err := url.Parse(path)
+	if err != nil {
+		return err
+	}
+	_, ok := earlyBootConfParsers[uri.Scheme]
 	if !ok {
-		return errors.Newf("scheme %s is not accessible during node startup", scheme)
+		return errors.Newf("scheme %s is not accessible during node startup", uri.Scheme)
 	}
 	return nil
 }
@@ -213,21 +216,8 @@ func ExternalStorageFromURI(
 	if err != nil {
 		return nil, err
 	}
-	es, err := MakeExternalStorage(ctx, conf, externalConfig, settings, blobClientFactory,
+	return MakeExternalStorage(ctx, conf, externalConfig, settings, blobClientFactory,
 		db, limiters, metrics, opts...)
-	if err != nil {
-		return nil, err
-	}
-	if buildutil.CrdbTestBuild {
-		// Verify that the Conf() method returns the URI field.
-		returnedConf := es.Conf()
-		if returnedConf.URI != conf.URI {
-			return nil, errors.AssertionFailedf(
-				"ExternalStorage.Conf() did not return the original URI: expected %q, got %q",
-				uri, returnedConf.URI)
-		}
-	}
-	return es, nil
 }
 
 // MakeExternalStorage creates an ExternalStorage from the given config.

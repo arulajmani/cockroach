@@ -61,10 +61,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/catconstants"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/catid"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
-	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlclustersettings"
 	"github.com/cockroachdb/cockroach/pkg/sql/stats"
-	"github.com/cockroachdb/cockroach/pkg/sql/ttl/ttlinit"
 	"github.com/cockroachdb/cockroach/pkg/util"
 	bulkutil "github.com/cockroachdb/cockroach/pkg/util/bulk"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
@@ -81,7 +79,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/tracing"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
-	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/pebble"
 )
@@ -104,13 +101,6 @@ var (
 		settings.WithVisibility(settings.Reserved),
 		settings.PositiveDuration,
 	)
-
-	restoreWaitForConformance = settings.RegisterBoolSetting(
-		settings.ApplicationLevel,
-		"restore.wait_for_span_config_conformance.enabled",
-		"if enabled, RESTORE will ensure span config conformance before ingestion",
-		false,
-	)
 )
 
 const (
@@ -126,10 +116,6 @@ const (
 	// be _exceeded_ before we no longer fast fail the restore job after hitting the
 	// maxRestoreRetryFastFail threshold.
 	restoreRetryProgressThreshold = 0
-
-	// droppedDescsOnFailKey is an info key that is set for a restore job when it
-	// has finished dropping its descriptors on failure.
-	droppedDescsOnFailKey = "dropped_descs_on_fail"
 )
 
 var restoreStatsInsertionConcurrency = settings.RegisterIntSetting(
@@ -225,7 +211,7 @@ func restoreWithRetry(
 	// dying), so if we receive a retryable error, re-plan and retry the restore.
 	retryOpts, progThreshold := getRetryOptionsAndProgressThreshold(execCtx)
 	logRate := restoreRetryLogRate.Get(&execCtx.ExecCfg().Settings.SV)
-	logThrottler := util.EveryMono(logRate)
+	logThrottler := util.Every(logRate)
 	var (
 		res                roachpb.RowCount
 		err                error
@@ -265,7 +251,7 @@ func restoreWithRetry(
 
 		log.Dev.Warningf(ctx, "encountered retryable error: %+v", err)
 
-		if logThrottler.ShouldProcess(crtime.NowMono()) {
+		if logThrottler.ShouldProcess(timeutil.Now()) {
 			// We throttle the logging of errors to the jobs messages table to avoid
 			// flooding the table during the hot loop of a retry.
 			if err := execCtx.ExecCfg().InternalDB.Txn(ctx, func(ctx context.Context, txn isql.Txn) error {
@@ -2092,20 +2078,6 @@ func (r *restoreResumer) doResume(ctx context.Context, execCtx interface{}) erro
 		resTotal.Add(res)
 		log.Dev.Infof(ctx, "finished restoring the validate data bundle")
 	}
-
-	_, sqlInstanceIDs, err := p.DistSQLPlanner().SetupAllNodesPlanning(ctx, p.ExtendedEvalContext(), p.ExecCfg())
-	if err != nil {
-		return err
-	}
-	numNodes := len(sqlInstanceIDs)
-	if numNodes == 0 {
-		numNodes = 1
-	}
-
-	if err := r.MaybeWaitForSpanConfigConformance(ctx, p.ExecCfg(), numNodes, mainData); err != nil {
-		return err
-	}
-
 	{
 		// Restore the main data bundle. We notably only restore the system tables
 		// later.
@@ -2236,7 +2208,7 @@ func (r *restoreResumer) doResume(ctx context.Context, execCtx interface{}) erro
 		log.Dev.Errorf(ctx, "failed to release protected timestamp: %v", err)
 	}
 	if !details.OnlineImpl() {
-		r.notifyStatsRefresherOfNewTables(ctx)
+		r.notifyStatsRefresherOfNewTables()
 	}
 
 	r.restoreStats = resTotal
@@ -2246,6 +2218,18 @@ func (r *restoreResumer) doResume(ctx context.Context, execCtx interface{}) erro
 
 	// Emit an event now that the restore job has completed.
 	emitRestoreJobEvent(ctx, p, jobs.StateSucceeded, r.job)
+
+	// Restore used all available SQL instances.
+	_, sqlInstanceIDs, err := p.DistSQLPlanner().SetupAllNodesPlanning(ctx, p.ExtendedEvalContext(), p.ExecCfg())
+	if err != nil {
+		return err
+	}
+	numNodes := len(sqlInstanceIDs)
+	if numNodes == 0 {
+		// This shouldn't ever happen, but we know that we have at least one
+		// instance (which is running this code right now).
+		numNodes = 1
+	}
 
 	// Collect telemetry.
 	{
@@ -2358,178 +2342,12 @@ func (r *restoreResumer) ReportResults(ctx context.Context, resultsCh chan<- tre
 // Initiate a run of CREATE STATISTICS. We don't know the actual number of
 // rows affected per table, so we use a large number because we want to make
 // sure that stats always get created/refreshed here.
-func (r *restoreResumer) notifyStatsRefresherOfNewTables(ctx context.Context) {
+func (r *restoreResumer) notifyStatsRefresherOfNewTables() {
 	details := r.job.Details().(jobspb.RestoreDetails)
 	for i := range details.TableDescs {
 		desc := tabledesc.NewBuilder(details.TableDescs[i]).BuildImmutableTable()
-		r.execCfg.StatsRefresher.NotifyMutation(ctx, desc, math.MaxInt32 /* rowsAffected */)
+		r.execCfg.StatsRefresher.NotifyMutation(desc, math.MaxInt32 /* rowsAffected */)
 	}
-}
-
-func waitForSpanConfigReconciliationCheckpoint(
-	ctx context.Context,
-	execCfg *sql.ExecutorConfig,
-	targetTimestamp hlc.Timestamp,
-	retryOpts retry.Options,
-) error {
-	log.Dev.Infof(ctx, "waiting for span config reconciliation job to checkpoint past %s", targetTimestamp)
-
-	var resolvedWalltime int64
-
-	for r := retry.StartWithCtx(ctx, retryOpts); r.Next(); {
-
-		if !restoreWaitForConformance.Get(&execCfg.Settings.SV) {
-			log.Dev.Infof(ctx, "skipping span config conformance check")
-			return nil
-		}
-
-		// Tragically, the span config reconcilation job only stores progress in its
-		// progress details field.
-		//
-		// TODO(msbutler): modify span config job to persist progress via progress
-		// storage.
-		checkQuery := `WITH progress AS (
-    SELECT
-        crdb_internal.pb_to_json(
-            'progress',
-            progress
-        )->'AutoSpanConfigReconciliation'->'checkpoint' AS checkpoint
-    FROM crdb_internal.system_jobs
-    WHERE status = 'running'
-      AND job_type = 'AUTO SPAN CONFIG RECONCILIATION'
-)
-SELECT
-    (checkpoint->>'wallTime')::INT64 AS walltime
-FROM progress;`
-		row, err := execCfg.InternalDB.Executor().QueryRowEx(ctx, "wait-for-span-config-progress", nil, sessiondata.NodeUserSessionDataOverride, checkQuery)
-		if err != nil {
-			return err
-		}
-		if row == nil {
-			return errors.New("running span config reconciliation job not found")
-		}
-		if row[0] == tree.DNull {
-			return errors.New("resolve time not found")
-		}
-
-		resolvedWallTimeDInt, ok := row[0].(*tree.DInt)
-		if !ok {
-			return errors.AssertionFailedf("expected resolved to be DInt (was %T)", row[0])
-		}
-		resolvedWalltime = int64(*resolvedWallTimeDInt)
-
-		if resolvedWalltime > targetTimestamp.WallTime {
-			log.Dev.Infof(ctx, "span config reconciliation job checkpointed past %d (at %d)", targetTimestamp.WallTime, resolvedWalltime)
-			return nil
-		}
-	}
-	return errors.Newf("span config reconciliation job did not checkpoint %d past target timestamp %d", resolvedWalltime, targetTimestamp.WallTime)
-}
-
-func (r *restoreResumer) MaybeWaitForSpanConfigConformance(
-	ctx context.Context, execCfg *sql.ExecutorConfig, numNodes int, mainData restorationData,
-) error {
-
-	if !restoreWaitForConformance.Get(&execCfg.Settings.SV) {
-		log.Dev.Infof(ctx, "skipping span config conformance check")
-		return nil
-	}
-
-	spansConformedInfoKey := "spans-conformed"
-	var alreadyConformed bool
-	if err := execCfg.InternalDB.Txn(ctx, func(ctx context.Context, txn isql.Txn) error {
-		jobInfo := jobs.InfoStorageForJob(txn, r.job.ID())
-		_, conformed, err := jobInfo.Get(
-			ctx, "get-span-conformed-info-key", spansConformedInfoKey,
-		)
-		if err != nil {
-			return err
-		}
-		if conformed {
-			alreadyConformed = true
-			return nil
-		}
-		return r.job.Messages().Record(
-			ctx, txn, "error", "checking span config conformance",
-		)
-	}); err != nil {
-		log.Dev.Warningf(ctx, "failed to record job error message: %v", err)
-	}
-	if alreadyConformed {
-		log.Dev.Infof(ctx, "already checked that spans conform to zone configs")
-		return nil
-	}
-
-	retryOpts := retry.Options{
-		InitialBackoff: 500 * time.Millisecond,
-		MaxBackoff:     5 * time.Second,
-		Multiplier:     2,
-		MaxDuration:    5 * time.Minute,
-	}
-
-	testingKnobs := execCfg.BackupRestoreTestingKnobs
-
-	if testingKnobs != nil && testingKnobs.RestoreSpanConfigConformanceRetryPolicy != nil {
-		retryOpts = *testingKnobs.RestoreSpanConfigConformanceRetryPolicy
-	}
-
-	// Before polling for span config conformance (i.e. replicas match span
-	// configs), wait for the span config reconciliation job to checkpoint past
-	// the current time to ensure the span config table is synced with zone
-	// configs.
-	targetTimestamp := execCfg.Clock.Now()
-	if err := waitForSpanConfigReconciliationCheckpoint(ctx, execCfg, targetTimestamp, retryOpts); err != nil {
-		return errors.Wrap(err, "waiting for span config reconciliation checkpoint")
-	}
-
-	// Wait for span config conformance before restoring the main data bundle.
-	spans, err := mainData.getRekeyedSpans(r.execCfg.Codec)
-	if err != nil {
-		return err
-	}
-
-	expectUnderReplication := numNodes < 3
-	var lastReport roachpb.SpanConfigConformanceReport
-	for ret := retry.StartWithCtx(ctx, retryOpts); ret.Next(); {
-
-		if !restoreWaitForConformance.Get(&execCfg.Settings.SV) {
-			log.Dev.Infof(ctx, "skipping span config conformance check")
-			return nil
-		}
-
-		report, err := execCfg.SpanConfigReporter.SpanConfigConformance(ctx, spans)
-		if err != nil {
-			return errors.Wrap(err, "checking span config conformance")
-		}
-
-		lastReport = report
-
-		if len(report.Unavailable) == 0 &&
-			len(report.OverReplicated) == 0 &&
-			len(report.ViolatingConstraints) == 0 &&
-			(expectUnderReplication || len(report.UnderReplicated) == 0) {
-			if err := execCfg.InternalDB.Txn(ctx, func(ctx context.Context, txn isql.Txn) error {
-				jobInfo := jobs.InfoStorageForJob(txn, r.job.ID())
-				if err := jobInfo.Write(
-					ctx, spansConformedInfoKey, []byte{},
-				); err != nil {
-					return err
-				}
-				return r.job.Messages().Record(
-					ctx, txn, "error", "span config conformance check completed",
-				)
-			}); err != nil {
-				log.Dev.Warningf(ctx, "failed to record job error message: %v", err)
-			}
-			return nil
-		}
-
-		log.Dev.Infof(ctx, "waiting for span config conformance: unavailable=%d, under-replicated=%d, over-replicated=%d, violating-constraints=%d",
-			len(report.Unavailable), len(report.UnderReplicated), len(report.OverReplicated), len(report.ViolatingConstraints))
-	}
-
-	return errors.Errorf("ranges for restoring objects could not conform to zone configs. Non conformant range count: unavailable=%d, under-replicated=%d, over-replicated=%d, violating-constraints=%d",
-		len(lastReport.Unavailable), len(lastReport.UnderReplicated), len(lastReport.OverReplicated), len(lastReport.ViolatingConstraints))
 }
 
 // tempSystemDatabaseID returns the ID of the descriptor for the temporary
@@ -2746,7 +2564,7 @@ func (r *restoreResumer) publishDescriptors(
 		}
 		// Assign a TTL schedule before publishing.
 		if mutTable.HasRowLevelTTL() {
-			j, err := ttlinit.CreateRowLevelTTLScheduledJob(
+			j, err := sql.CreateRowLevelTTLScheduledJob(
 				ctx,
 				jobsKnobs,
 				jobs.ScheduledJobTxn(txn),
@@ -3002,13 +2820,6 @@ func (r *restoreResumer) OnFailOrCancel(
 		return err
 	}
 
-	testingKnobs := execCfg.BackupRestoreTestingKnobs
-	if testingKnobs != nil && testingKnobs.AfterRevertRestoreDropDescriptors != nil {
-		if err := testingKnobs.AfterRevertRestoreDropDescriptors(); err != nil {
-			return err
-		}
-	}
-
 	if details.DescriptorCoverage == tree.AllDescriptors {
 		// The temporary system table descriptors should already have been dropped
 		// in `dropDescriptors` but we still need to drop the temporary system db.
@@ -3054,19 +2865,6 @@ func (r *restoreResumer) dropDescriptors(
 		return nil
 	}
 
-	jobInfo := jobs.InfoStorageForJob(txn, r.job.ID())
-	_, hasDropped, err := jobInfo.Get(
-		ctx, "get-restore-dropped-descs-on-fail-key", droppedDescsOnFailKey,
-	)
-	if err != nil {
-		return err
-	}
-	if hasDropped {
-		// Descriptors have already been dropped once before, this is a retry of the
-		// cleanup.
-		return nil
-	}
-
 	b := txn.KV().NewBatch()
 	const kvTrace = false
 	// Collect the tables into mutable versions.
@@ -3099,7 +2897,7 @@ func (r *restoreResumer) dropDescriptors(
 	// immediately.
 	dropTime := int64(1)
 	scheduledJobs := jobs.ScheduledJobTxn(txn)
-	env := jobs.JobSchedulerEnv(r.execCfg.JobsKnobs())
+	env := sql.JobSchedulerEnv(r.execCfg.JobsKnobs())
 	for i := range mutableTables {
 		tableToDrop := mutableTables[i]
 		tablesToGC = append(tablesToGC, tableToDrop.ID)
@@ -3388,10 +3186,7 @@ func (r *restoreResumer) dropDescriptors(
 		return errors.Wrap(err, "dropping tables created at the start of restore caused by fail/cancel")
 	}
 
-	return errors.Wrap(
-		jobInfo.Write(ctx, droppedDescsOnFailKey, []byte{}),
-		"checkpointing dropped descs on fail",
-	)
+	return nil
 }
 
 // removeExistingTypeBackReferences removes back references from types that

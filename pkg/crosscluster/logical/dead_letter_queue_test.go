@@ -442,7 +442,7 @@ func TestDLQJSONQuery(t *testing.T) {
 		FamilyName: "primary",
 	})
 
-	decoder, err := cdcevent.NewEventDecoder(ctx, &execCfg, targets, false, false, cdcevent.DecoderOptions{})
+	decoder, err := cdcevent.NewEventDecoder(ctx, &execCfg, targets, false, false)
 	require.NoError(t, err)
 
 	popRow, cleanup := cdctest.MakeRangeFeedValueReader(t, srv.ExecutorConfig(), tableDesc)

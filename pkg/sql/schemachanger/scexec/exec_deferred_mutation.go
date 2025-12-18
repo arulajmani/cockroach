@@ -29,8 +29,6 @@ type deferredState struct {
 	statsToRefresh               catalog.DescriptorIDSet
 	indexesToSplitAndScatter     []indexesToSplitAndScatter
 	ttlScheduleMetadataUpdates   []ttlScheduleMetadataUpdate
-	ttlScheduleCronUpdates       []ttlScheduleCronUpdate
-	ttlSchedulesToCreate         []ttlScheduleToCreate
 	gcJobs
 }
 
@@ -47,15 +45,6 @@ type indexesToSplitAndScatter struct {
 type ttlScheduleMetadataUpdate struct {
 	tableID descpb.ID
 	newName string
-}
-
-type ttlScheduleCronUpdate struct {
-	scheduleID  jobspb.ScheduleID
-	newCronExpr string
-}
-
-type ttlScheduleToCreate struct {
-	tableID descpb.ID
 }
 
 type schemaChangerJobUpdate struct {
@@ -103,23 +92,6 @@ func (s *deferredState) UpdateTTLScheduleMetadata(
 	return nil
 }
 
-func (s *deferredState) UpdateTTLScheduleCron(
-	ctx context.Context, scheduleID jobspb.ScheduleID, cronExpr string,
-) error {
-	s.ttlScheduleCronUpdates = append(s.ttlScheduleCronUpdates, ttlScheduleCronUpdate{
-		scheduleID:  scheduleID,
-		newCronExpr: cronExpr,
-	})
-	return nil
-}
-
-func (s *deferredState) CreateRowLevelTTLSchedule(ctx context.Context, tableID descpb.ID) error {
-	s.ttlSchedulesToCreate = append(s.ttlSchedulesToCreate, ttlScheduleToCreate{
-		tableID: tableID,
-	})
-	return nil
-}
-
 func (s *deferredState) AddNewSchemaChangerJob(
 	jobID jobspb.JobID,
 	stmts []scpb.Statement,
@@ -127,7 +99,6 @@ func (s *deferredState) AddNewSchemaChangerJob(
 	auth scpb.Authorization,
 	descriptorIDs catalog.DescriptorIDSet,
 	runningStatus redact.RedactableString,
-	distributedMergeMode jobspb.IndexBackfillDistributedMergeMode,
 ) error {
 	if s.schemaChangerJob != nil {
 		return errors.AssertionFailedf("cannot create more than one new schema change job")
@@ -139,7 +110,6 @@ func (s *deferredState) AddNewSchemaChangerJob(
 		auth,
 		descriptorIDs,
 		runningStatus,
-		distributedMergeMode,
 	)
 	return nil
 }
@@ -160,7 +130,6 @@ func MakeDeclarativeSchemaChangeJobRecord(
 	auth scpb.Authorization,
 	descriptorIDs catalog.DescriptorIDSet,
 	runningStatus redact.RedactableString,
-	distributedMergeMode jobspb.IndexBackfillDistributedMergeMode,
 ) *jobs.Record {
 	stmtStrs := make([]string, len(stmts))
 	for i, stmt := range stmts {
@@ -180,9 +149,7 @@ func MakeDeclarativeSchemaChangeJobRecord(
 		Statements:    stmtStrs,
 		Username:      username.MakeSQLUsernameFromPreNormalizedString(auth.UserName),
 		DescriptorIDs: descriptorIDs.Ordered(),
-		Details: jobspb.NewSchemaChangeDetails{
-			DistributedMergeMode: distributedMergeMode,
-		},
+		Details:       jobspb.NewSchemaChangeDetails{},
 		Progress:      jobspb.NewSchemaChangeProgress{},
 		StatusMessage: jobs.StatusMessage(runningStatus),
 		NonCancelable: isNonCancelable,
@@ -251,25 +218,6 @@ func (s *deferredState) exec(
 			continue
 		}
 		if err := m.UpdateTTLScheduleLabel(ctx, tableDesc); err != nil {
-			return err
-		}
-	}
-	for _, cronUpdate := range s.ttlScheduleCronUpdates {
-		if err := m.UpdateTTLScheduleCron(ctx, cronUpdate.scheduleID, cronUpdate.newCronExpr); err != nil {
-			return err
-		}
-	}
-	for _, ttlCreate := range s.ttlSchedulesToCreate {
-		descs, err := c.MustReadImmutableDescriptors(ctx, ttlCreate.tableID)
-		if err != nil {
-			return err
-		}
-		desc := descs[0]
-		tableDesc, ok := desc.(catalog.TableDescriptor)
-		if !ok {
-			continue
-		}
-		if err := m.CreateRowLevelTTLSchedule(ctx, tableDesc); err != nil {
 			return err
 		}
 	}

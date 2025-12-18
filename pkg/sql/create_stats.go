@@ -95,7 +95,7 @@ var automaticStatsJobAutoCleanup = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"sql.stats.automatic_stats_job_auto_cleanup.enabled",
 	"set to true to enable automatic cleanup of completed AUTO CREATE STATISTICS jobs",
-	true)
+	false)
 
 const nonIndexColHistogramBuckets = 2
 
@@ -185,14 +185,14 @@ func (n *createStatsNode) runJob(ctx context.Context) error {
 		}
 		return n.p.ExecCfg().JobRegistry.CreateStartableJobWithTxn(ctx, &job, jobID, txn, *record)
 	}); err != nil {
+		if !errorOnConcurrentCreateStats.Get(n.p.ExecCfg().SV()) && errors.Is(err, stats.ConcurrentCreateStatsError) {
+			log.Dev.Infof(ctx, "concurrent create stats job found, skipping")
+			return nil
+		}
 		if job != nil {
 			if cleanupErr := job.CleanupOnRollback(ctx); cleanupErr != nil {
 				log.Dev.Warningf(ctx, "failed to cleanup StartableJob: %v", cleanupErr)
 			}
-		}
-		if !errorOnConcurrentCreateStats.Get(n.p.ExecCfg().SV()) && errors.Is(err, stats.ConcurrentCreateStatsError) {
-			log.Dev.Infof(ctx, "concurrent create stats job found, skipping")
-			return nil
 		}
 		return err
 	}
@@ -263,7 +263,7 @@ func (n *createStatsNode) makeJobRecord(ctx context.Context) (*jobs.Record, erro
 		)
 	}
 
-	if n.p.execCfg.TableStatsCache.DisallowedOnSystemTable(tableDesc.GetID()) {
+	if stats.DisallowedOnSystemTable(tableDesc.GetID()) {
 		return nil, pgerror.Newf(
 			pgcode.WrongObjectType, "cannot create statistics on system.%s", tableDesc.GetName(),
 		)
@@ -294,7 +294,7 @@ func (n *createStatsNode) makeJobRecord(ctx context.Context) (*jobs.Record, erro
 		virtColEnabled := statsOnVirtualCols.Get(n.p.ExecCfg().SV())
 		// Disable multi-column stats and deleting stats if partial statistics at
 		// the extremes are requested.
-		// TODO(#94076): add support for creating multi-column stats.
+		// TODO(faizaanmadhani): Add support for multi-column stats.
 		var multiColEnabled bool
 		if !n.Options.UsingExtremes {
 			multiColEnabled = stats.MultiColumnStatisticsClusterMode.Get(n.p.ExecCfg().SV())
