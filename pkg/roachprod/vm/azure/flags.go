@@ -28,13 +28,12 @@ type ProviderOpts struct {
 	UltraDiskIOPS    int64
 	DiskCaching      string
 	UseMultipleDisks bool
-	BootDiskOnly     bool
 }
 
 // These default locations support availability zones. At the time of
 // this comment, `westus` did not and `westus2` is consistently out of
 // capacity.
-var defaultZones = []string{
+var DefaultZones = []string{
 	"eastus-1",
 	"canadacentral-1",
 	"westus3-1",
@@ -61,21 +60,21 @@ func (p *Provider) CreateProviderOpts() vm.ProviderOpts {
 }
 
 // ConfigureProviderFlags implements vm.ProviderFlags and is a no-op.
-func (p *Provider) ConfigureProviderFlags(flags *pflag.FlagSet, _ vm.MultipleProjectsOption) {
-	flags.DurationVar(&p.OperationTimeout, ProviderName+"-timeout", p.OperationTimeout,
-		"The maximum amount of time for an Azure API operation to take")
-	flags.BoolVar(&p.SyncDelete, ProviderName+"-sync-delete", p.SyncDelete,
-		"Wait for deletions to finish before returning")
+func (p *Provider) ConfigureProviderFlags(*pflag.FlagSet, vm.MultipleProjectsOption) {
 }
 
 // ConfigureClusterCleanupFlags is part of ProviderOpts.
 func (o *Provider) ConfigureClusterCleanupFlags(flags *pflag.FlagSet) {
-	flags.StringSliceVar(&o.SubscriptionNames, ProviderName+"-subscription-names", []string{},
+	flags.StringSliceVar(&providerInstance.SubscriptionNames, ProviderName+"-subscription-names", []string{},
 		"Azure subscription names as a comma-separated string")
 }
 
 // ConfigureCreateFlags implements vm.ProviderFlags.
 func (o *ProviderOpts) ConfigureCreateFlags(flags *pflag.FlagSet) {
+	flags.DurationVar(&providerInstance.OperationTimeout, ProviderName+"-timeout", providerInstance.OperationTimeout,
+		"The maximum amount of time for an Azure API operation to take")
+	flags.BoolVar(&providerInstance.SyncDelete, ProviderName+"-sync-delete", providerInstance.SyncDelete,
+		"Wait for deletions to finish before returning")
 	flags.StringVar(&o.MachineType, ProviderName+"-machine-type",
 		string(armcompute.VirtualMachineSizeTypesStandardD4V3),
 		"Machine type (see https://azure.microsoft.com/en-us/pricing/details/virtual-machines/linux/)")
@@ -84,7 +83,7 @@ func (o *ProviderOpts) ConfigureCreateFlags(flags *pflag.FlagSet) {
 			"and availability zone seperated by a dash. If zones are formatted as Location-AZ:N where N is an integer,\n"+
 			"the zone will be repeated N times. If > 1 zone specified, nodes will be geo-distributed\n"+
 			"regardless of geo (default [%s])",
-			strings.Join(DefaultZones(true), ",")))
+			strings.Join(DefaultZones, ",")))
 	flags.StringVar(&o.VnetName, ProviderName+"-vnet-name", "common",
 		"The name of the VNet to use")
 	flags.StringVar(&o.NetworkDiskType, ProviderName+"-network-disk-type", "premium-ssd",
@@ -100,6 +99,4 @@ func (o *ProviderOpts) ConfigureCreateFlags(flags *pflag.FlagSet) {
 	flags.BoolVar(&o.UseMultipleDisks, ProviderName+"-enable-multiple-stores",
 		false, "Enable the use of multiple stores by creating one store directory per disk. "+
 			"Default is to raid0 stripe all disks or use ZFS (if --file-system=zfs).")
-	flags.BoolVar(&o.BootDiskOnly, ProviderName+"-boot-disk-only", o.BootDiskOnly,
-		"Only attach the boot disk. No additional volumes will be provisioned even if specified.")
 }

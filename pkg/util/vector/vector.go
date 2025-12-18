@@ -21,8 +21,6 @@ import (
 // MaxDim is the maximum number of dimensions a vector can have.
 const MaxDim = 16000
 
-var MaxDimExceededErr = pgerror.Newf(pgcode.ProgramLimitExceeded, "vector cannot have more than %d dimensions", MaxDim)
-
 // T is the type of a PGVector-like vector.
 type T []float32
 
@@ -40,7 +38,7 @@ func ParseVector(input string) (T, error) {
 	parts := strings.Split(input, ",")
 
 	if len(parts) > MaxDim {
-		return T{}, MaxDimExceededErr
+		return T{}, pgerror.Newf(pgcode.ProgramLimitExceeded, "vector cannot have more than %d dimensions", MaxDim)
 	}
 
 	vector := make([]float32, len(parts))
@@ -116,12 +114,12 @@ func (v T) Compare(v2 T) (int, error) {
 }
 
 // Encode encodes the vector as a byte array suitable for storing in KV.
-func Encode(appendTo []byte, t T) []byte {
+func Encode(appendTo []byte, t T) ([]byte, error) {
 	appendTo = encoding.EncodeUint32Ascending(appendTo, uint32(len(t)))
 	for i := range t {
 		appendTo = encoding.EncodeUntaggedFloat32Value(appendTo, t[i])
 	}
-	return appendTo
+	return appendTo, nil
 }
 
 // Decode decodes the byte array into a vector and returns any remaining bytes.
@@ -281,7 +279,7 @@ func Random(rng *rand.Rand, maxDim int) T {
 	v := make(T, n)
 	for i := range v {
 		for {
-			v[i] = float32(rng.NormFloat64())
+			v[i] = math.Float32frombits(rng.Uint32())
 			if math.IsNaN(float64(v[i])) || math.IsInf(float64(v[i]), 0) {
 				continue
 			}

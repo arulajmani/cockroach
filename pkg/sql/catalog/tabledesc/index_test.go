@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
@@ -30,7 +31,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/vecindex/vecpb"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
-	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -50,6 +50,9 @@ func TestIndexInterface(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	runner := sqlutils.MakeSQLRunner(conn)
+
+	// Enable vector indexes.
+	runner.Exec(t, `SET CLUSTER SETTING feature.vector_index.enabled = true`)
 
 	runner.Exec(t, `
 		CREATE TABLE d.t (
@@ -456,8 +459,6 @@ func TestLatestIndexDescriptorVersionValues(t *testing.T) {
 	tdb := sqlutils.MakeSQLRunner(sqlDB)
 
 	// Test relies on legacy schema changer testing knobs.
-	tdb.Exec(t, "SET create_table_with_schema_locked=false")
-	tdb.Exec(t, "SET CLUSTER SETTING sql.defaults.use_declarative_schema_changer = 'off'")
 	tdb.Exec(t, "SET use_declarative_schema_changer = 'off'")
 	// Populate the test cluster with all manner of indexes and index mutations.
 	tdb.Exec(t, "CREATE SEQUENCE s")
@@ -471,11 +472,12 @@ func TestLatestIndexDescriptorVersionValues(t *testing.T) {
 	)
 	tdb.CheckQueryResultsRetry(t, q, [][]string{{"0"}})
 	// Hang on ALTER PRIMARY KEY finalization.
-	g := ctxgroup.WithContext(ctx)
-	g.GoCtx(func(ctx context.Context) error {
-		_, err := sqlDB.ExecContext(ctx, "ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (d)")
-		return err
-	})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tdb.Exec(t, "ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (d)")
+		wg.Done()
+	}()
 	<-swapNotification
 
 	test := func(desc catalog.TableDescriptor) {
@@ -590,7 +592,7 @@ func TestLatestIndexDescriptorVersionValues(t *testing.T) {
 
 	// Resume pending statement execution.
 	waitBeforeContinuing <- struct{}{}
-	require.NoError(t, g.Wait())
+	wg.Wait()
 }
 
 // TestSecKeyLatestIndexDescriptorVersion tests that the

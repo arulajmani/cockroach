@@ -7,13 +7,11 @@ package importer
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"sync/atomic"
 	"time"
 
-	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobsprofiler"
@@ -22,9 +20,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/sql"
-	"github.com/cockroachdb/cockroach/pkg/sql/bulkingest"
-	"github.com/cockroachdb/cockroach/pkg/sql/bulkmerge"
-	"github.com/cockroachdb/cockroach/pkg/sql/bulksst"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/tabledesc"
 	"github.com/cockroachdb/cockroach/pkg/sql/execinfrapb"
@@ -52,10 +47,6 @@ var replanFrequency = settings.RegisterDurationSetting(
 	settings.PositiveDuration,
 )
 
-// importProgressDebugName is used to mark the transaction for updating
-// import job progress.
-const importProgressDebugName = `import_progress`
-
 // distImport is used by IMPORT to run a DistSQL flow to ingest data by starting
 // reader processes on many nodes that each read and ingest their assigned files
 // and then send back a summary of what they ingested. The combined summary is
@@ -64,7 +55,7 @@ func distImport(
 	ctx context.Context,
 	execCtx sql.JobExecContext,
 	job *jobs.Job,
-	table *execinfrapb.ReadImportDataSpec_ImportTable,
+	tables map[string]*execinfrapb.ReadImportDataSpec_ImportTable,
 	typeDescs []*descpb.TypeDescriptor,
 	from []string,
 	format roachpb.IOFileFormat,
@@ -75,11 +66,6 @@ func distImport(
 ) (kvpb.BulkOpSummary, error) {
 	ctx, sp := tracing.ChildSpan(ctx, "importer.distImport")
 	defer sp.Finish()
-
-	// When using distributed merge the processor will emit the SST's and their
-	// start and end keys.
-	details := job.Details().(jobspb.ImportDetails)
-	useDistributedMerge := details.UseDistributedMerge
 
 	dsp := execCtx.DistSQLPlanner()
 	makePlan := func(ctx context.Context, dsp *sql.DistSQLPlanner) (*sql.PhysicalPlan, *sql.PlanningCtx, error) {
@@ -102,7 +88,7 @@ func distImport(
 		})
 
 		inputSpecs := makeImportReaderSpecs(
-			job, table, typeDescs, from, format, len(sqlInstanceIDs), /* numSQLInstances */
+			job, tables, typeDescs, from, format, len(sqlInstanceIDs), /* numSQLInstances */
 			walltime, execCtx.User(), procsPerNode, initialSplitsPerProc,
 		)
 
@@ -114,24 +100,17 @@ func distImport(
 			corePlacement[i].SQLInstanceID = sqlInstanceIDs[i%len(sqlInstanceIDs)]
 			corePlacement[i].Core.ReadImport = inputSpecs[i]
 		}
-		outputTypes := []*types.T{types.Bytes, types.Bytes}
-		if useDistributedMerge {
-			outputTypes = []*types.T{types.Bytes, types.Bytes, types.Bytes}
-		}
 		p.AddNoInputStage(
 			corePlacement,
 			execinfrapb.PostProcessSpec{},
 			// The direct-ingest readers will emit a binary encoded BulkOpSummary.
-			outputTypes,
+			[]*types.T{types.Bytes, types.Bytes},
 			execinfrapb.Ordering{},
 			nil, /* finalizeLastStageCb */
 		)
-		// Map the output directly back.
-		colMap := make([]int, len(outputTypes))
-		for i := range colMap {
-			colMap[i] = i
-		}
-		p.PlanToStreamColMap = colMap
+
+		p.PlanToStreamColMap = []int{0, 1}
+
 		sql.FinalizePlan(ctx, planCtx, p)
 		return p, planCtx, nil
 	}
@@ -142,7 +121,8 @@ func distImport(
 	}
 
 	// accumulatedBulkSummary accumulates the BulkOpSummary returned from each
-	// processor in their progress updates. It is used to update the job progress.
+	// processor in their progress updates. It stores stats about the amount of
+	// data written since the last time we update the job progress.
 	accumulatedBulkSummary := struct {
 		syncutil.Mutex
 		kvpb.BulkOpSummary
@@ -178,7 +158,7 @@ func distImport(
 	fractionProgress := make([]uint32, len(from))
 
 	updateJobProgress := func() error {
-		return job.DebugNameNoTxn(importProgressDebugName).FractionProgressed(ctx, func(
+		return job.NoTxn().FractionProgressed(ctx, func(
 			ctx context.Context, details jobspb.ProgressDetails,
 		) float32 {
 			var overall float32
@@ -193,7 +173,8 @@ func distImport(
 			}
 
 			accumulatedBulkSummary.Lock()
-			prog.Summary = accumulatedBulkSummary.BulkOpSummary.DeepCopy()
+			prog.Summary.Add(accumulatedBulkSummary.BulkOpSummary)
+			accumulatedBulkSummary.Reset()
 			accumulatedBulkSummary.Unlock()
 			return overall / float32(len(from))
 		},
@@ -221,25 +202,17 @@ func distImport(
 	}
 
 	var res kvpb.BulkOpSummary
-	var processorOutput []bulksst.SSTFiles
 	rowResultWriter := sql.NewCallbackResultWriter(func(ctx context.Context, row tree.Datums) error {
 		var counts kvpb.BulkOpSummary
 		if err := protoutil.Unmarshal([]byte(*row[0].(*tree.DBytes)), &counts); err != nil {
 			return err
 		}
 		res.Add(counts)
-		if len(row) == 3 {
-			var sstFiles bulksst.SSTFiles
-			if err := protoutil.Unmarshal([]byte(*row[2].(*tree.DBytes)), &sstFiles); err != nil {
-				return err
-			}
-			processorOutput = append(processorOutput, sstFiles)
-		}
 		return nil
 	})
 
 	if planCtx.ExtendedEvalCtx.Codec.ForSystemTenant() {
-		if err := presplitTableBoundaries(ctx, execCtx.ExecCfg(), table); err != nil {
+		if err := presplitTableBoundaries(ctx, execCtx.ExecCfg(), tables); err != nil {
 			return kvpb.BulkOpSummary{}, err
 		}
 	}
@@ -296,39 +269,10 @@ func distImport(
 		execCfg := execCtx.ExecCfg()
 		jobsprofiler.StorePlanDiagram(ctx, execCfg.DistSQLSrv.Stopper, p, execCfg.InternalDB, job.ID())
 
-		// Copy the evalCtx, as dsp.Run() might change it.
+		// Copy the eval.Context, as dsp.Run() might change it.
 		evalCtxCopy := planCtx.ExtendedEvalCtx.Context.Copy()
 		dsp.Run(ctx, planCtx, nil, p, recv, evalCtxCopy, testingKnobs.onSetupFinish)
-		if err := rowResultWriter.Err(); err != nil {
-			return err
-		}
-		if !useDistributedMerge {
-			return nil
-		}
-
-		// TODO(jeffswenson): this isn't complete. We don't actually want to
-		// generate splits for each index. What we want to do is generate splits
-		// for each span config produced by the table that does not coalesce. For
-		// example, a single RBR index would get split points between each of the
-		// ranges.
-		//
-		// We should also consider making bulkingest tolerate ingesting an SST
-		// that has data for multiple ranges. At the very least that will handle
-		// the case where KV decides to run splits we were not expecting.
-		schemaSpans := tabledesc.NewBuilder(table.Desc).BuildImmutableTable().AllIndexSpans(execCfg.Codec)
-		inputSSTs, spans, err := bulksst.CombineFileInfo(processorOutput, schemaSpans)
-		if err != nil {
-			return err
-		}
-
-		merged, err := bulkmerge.Merge(ctx, execCtx, inputSSTs, spans, func(instanceID base.SQLInstanceID) string {
-			return fmt.Sprintf("nodelocal://%d/job/%d/merge/", instanceID, job.ID())
-		})
-		if err != nil {
-			return err
-		}
-
-		return bulkingest.IngestFiles(ctx, execCtx, spans, merged)
+		return rowResultWriter.Err()
 	})
 
 	g.GoCtx(replanChecker)
@@ -348,7 +292,7 @@ func getLastImportSummary(job *jobs.Job) kvpb.BulkOpSummary {
 
 func makeImportReaderSpecs(
 	job *jobs.Job,
-	table *execinfrapb.ReadImportDataSpec_ImportTable,
+	tables map[string]*execinfrapb.ReadImportDataSpec_ImportTable,
 	typeDescs []*descpb.TypeDescriptor,
 	from []string,
 	format roachpb.IOFileFormat,
@@ -369,8 +313,7 @@ func makeImportReaderSpecs(
 		if i < cap(inputSpecs) {
 			spec := &execinfrapb.ReadImportDataSpec{
 				JobID:  int64(job.ID()),
-				Table:  table,
-				Tables: map[string]*execinfrapb.ReadImportDataSpec_ImportTable{"": table},
+				Tables: tables,
 				Types:  typeDescs,
 				Format: format,
 				Progress: execinfrapb.JobProgress{
@@ -383,7 +326,6 @@ func makeImportReaderSpecs(
 				UserProto:             user.EncodeProto(),
 				DatabasePrimaryRegion: details.DatabasePrimaryRegion,
 				InitialSplits:         int32(initialSplitsPerProc),
-				UseDistributedMerge:   details.UseDistributedMerge,
 			}
 			inputSpecs = append(inputSpecs, spec)
 		}
@@ -403,17 +345,21 @@ func makeImportReaderSpecs(
 }
 
 func presplitTableBoundaries(
-	ctx context.Context, cfg *sql.ExecutorConfig, table *execinfrapb.ReadImportDataSpec_ImportTable,
+	ctx context.Context,
+	cfg *sql.ExecutorConfig,
+	tables map[string]*execinfrapb.ReadImportDataSpec_ImportTable,
 ) error {
 	var span *tracing.Span
 	ctx, span = tracing.ChildSpan(ctx, "import-pre-splitting-table-boundaries")
 	defer span.Finish()
 	expirationTime := cfg.DB.Clock().Now().Add(time.Hour.Nanoseconds(), 0)
-	// TODO(ajwerner): Consider passing in the wrapped descriptors.
-	tblDesc := tabledesc.NewBuilder(table.Desc).BuildImmutableTable()
-	for _, span := range tblDesc.AllIndexSpans(cfg.Codec) {
-		if err := cfg.DB.AdminSplit(ctx, span.Key, expirationTime); err != nil {
-			return err
+	for _, tbl := range tables {
+		// TODO(ajwerner): Consider passing in the wrapped descriptors.
+		tblDesc := tabledesc.NewBuilder(tbl.Desc).BuildImmutableTable()
+		for _, span := range tblDesc.AllIndexSpans(cfg.Codec) {
+			if err := cfg.DB.AdminSplit(ctx, span.Key, expirationTime); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

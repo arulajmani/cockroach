@@ -38,11 +38,6 @@ import (
 func (mb *mutationBuilder) buildRowLevelBeforeTriggers(
 	eventType tree.TriggerEventType, cascade bool,
 ) bool {
-	if mb.b.evalCtx.SessionData().UseImprovedRoutineDepsTriggersAndComputedCols {
-		// Avoid adding transitive dependencies that are already tracked in the
-		// trigger object.
-		defer mb.b.DisableSchemaDepTracking()()
-	}
 	var eventsToMatch tree.TriggerEventTypeSet
 	eventsToMatch.Add(eventType)
 	triggers := cat.GetRowLevelTriggers(mb.tab, tree.TriggerActionTimeBefore, eventsToMatch)
@@ -85,7 +80,7 @@ func (mb *mutationBuilder) buildRowLevelBeforeTriggers(
 	canModifyRows := true
 	for i := range triggers {
 		trigger := triggers[i]
-		triggerScope.expr = f.ConstructBarrier(triggerScope.expr, false /* leakproofPermeable */)
+		triggerScope.expr = f.ConstructBarrier(triggerScope.expr)
 
 		// Resolve the trigger function and build the invocation.
 		args := mb.buildTriggerFunctionArgs(trigger, eventType, oldColID, newColID)
@@ -138,7 +133,7 @@ func (mb *mutationBuilder) buildRowLevelBeforeTriggers(
 			newColID = triggerFnColID
 		}
 	}
-	triggerScope.expr = f.ConstructBarrier(triggerScope.expr, false /* leakproofPermeable */)
+	triggerScope.expr = f.ConstructBarrier(triggerScope.expr)
 
 	// INSERT and UPDATE triggers can modify the row to be inserted or updated
 	// via the return value of the trigger function.
@@ -362,7 +357,7 @@ func (mb *mutationBuilder) ensureNoRowsModifiedByTrigger(
 		f.ConstructNull(types.Int),
 	)
 	mb.b.projectColWithMetadataName(triggerScope, "check-rows", types.Int, check)
-	triggerScope.expr = f.ConstructBarrier(triggerScope.expr, false /* leakproofPermeable */)
+	triggerScope.expr = f.ConstructBarrier(triggerScope.expr)
 }
 
 // recomputeComputedColsForTrigger resets all computed columns and builds new
@@ -694,7 +689,7 @@ func (tb *rowLevelAfterTriggerBuilder) Build(
 			for i, trigger := range tb.triggers {
 				if i > 0 {
 					// No need to place a barrier below the first trigger.
-					triggerScope.expr = f.ConstructBarrier(triggerScope.expr, false /* leakproofPermeable */)
+					triggerScope.expr = f.ConstructBarrier(triggerScope.expr)
 				}
 
 				tgName := tree.NewDName(string(trigger.Name()))
@@ -765,7 +760,7 @@ func (tb *rowLevelAfterTriggerBuilder) Build(
 			}
 			// Always wrap the expression in a barrier, or else the projections will be
 			// pruned and the triggers will not be executed.
-			return f.ConstructBarrier(triggerScope.expr, false /* leakproofPermeable */)
+			return f.ConstructBarrier(triggerScope.expr)
 		})
 }
 
@@ -854,8 +849,6 @@ func (b *Builder) buildTriggerFunction(
 	stmtScope := plBuilder.buildRootBlock(stmt.AST, triggerFuncScope, params)
 	udfDef.Body = []memo.RelExpr{stmtScope.expr}
 	udfDef.BodyProps = []*physical.Required{stmtScope.makePhysicalProps()}
-	// Placeholder that ensure the length of BodyTags is the same as Body.
-	udfDef.BodyTags = make([]string, 1)
 
 	return f.ConstructUDFCall(args, &memo.UDFCallPrivate{Def: udfDef}), resolvedDef
 }

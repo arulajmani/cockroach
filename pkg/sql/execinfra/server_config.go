@@ -157,7 +157,8 @@ type ServerConfig struct {
 	ExternalStorageFromURI cloud.ExternalStorageFromURIFactory
 
 	// ProtectedTimestampProvider maintains the state of the protected timestamp
-	// subsystem. It is queried during the GC process.
+	// subsystem. It is queried during the GC process and in the handling of
+	// AdminVerifyProtectedTimestampRequest.
 	ProtectedTimestampProvider protectedts.Provider
 
 	DistSender *kvcoord.DistSender
@@ -322,9 +323,6 @@ type TestingKnobs struct {
 	// IndexBackfillMergerTestingKnobs are the index backfill merger specific
 	// testing knobs.
 	IndexBackfillMergerTestingKnobs base.ModuleTestingKnobs
-
-	// BulkMergeTestingKnobs are specific to the distributed merge pipeline.
-	BulkMergeTestingKnobs base.ModuleTestingKnobs
 
 	// ProcessorNoTracingSpan is used to disable the creation of a tracing span
 	// in ProcessorBase.StartInternal if the tracing is enabled.

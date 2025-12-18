@@ -27,6 +27,7 @@ var consistencyCheckInterval = settings.RegisterDurationSetting(
 	"the time between range consistency checks; set to 0 to disable consistency checking."+
 		" Note that intervals that are too short can negatively impact performance.",
 	24*time.Hour,
+	settings.NonNegativeDuration,
 )
 
 var consistencyCheckRate = settings.RegisterByteSizeSetting(
@@ -202,7 +203,7 @@ func (q *consistencyQueue) process(
 			return false, nil
 		}
 		err := pErr.GoError()
-		log.KvDistribution.Errorf(ctx, "%v", err)
+		log.Errorf(ctx, "%v", err)
 		return false, err
 	}
 	if fn := repl.store.cfg.TestingKnobs.ConsistencyTestingKnobs.ConsistencyQueueResultHook; fn != nil {

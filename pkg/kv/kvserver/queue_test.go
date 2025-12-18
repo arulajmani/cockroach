@@ -33,7 +33,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
-	"github.com/cockroachdb/redact"
 	"github.com/gogo/protobuf/proto"
 	"github.com/stretchr/testify/require"
 )
@@ -125,8 +124,11 @@ func createReplicas(t *testing.T, tc *testContext, num int) []*Replica {
 	if err != nil {
 		t.Fatal(err)
 	}
-	require.NoError(t, tc.store.RemoveReplica(context.Background(),
-		repl1, repl1.Desc().NextReplicaID, redact.SafeString(t.Name())))
+	if err := tc.store.RemoveReplica(context.Background(), repl1, repl1.Desc().NextReplicaID, RemoveOptions{
+		DestroyData: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	repls := make([]*Replica, num)
 	for i := 0; i < num; i++ {
@@ -721,7 +723,7 @@ func TestAcceptsUnsplitRanges(t *testing.T) {
 		},
 		stopper)
 
-	maxWontSplitAddr, err := keys.Addr(keys.Meta1KeyMax)
+	maxWontSplitAddr, err := keys.Addr(keys.SystemPrefix)
 	require.NoError(t, err)
 
 	minWillSplitAddr, err := keys.Addr(keys.TableDataMin)
@@ -730,7 +732,7 @@ func TestAcceptsUnsplitRanges(t *testing.T) {
 	// Remove replica for range 1 since it encompasses the entire keyspace.
 	repl1, err := s.GetReplica(1)
 	require.NoError(t, err)
-	require.NoError(t, s.RemoveReplica(ctx, repl1, repl1.Desc().NextReplicaID, redact.SafeString(t.Name())))
+	require.NoError(t, s.RemoveReplica(ctx, repl1, repl1.Desc().NextReplicaID, RemoveOptions{DestroyData: true}))
 
 	// This range can never be split due to zone configs boundaries.
 	neverSplits := createReplica(s, 2, roachpb.RKeyMin, maxWontSplitAddr)
@@ -947,8 +949,11 @@ func TestBaseQueuePurgatory(t *testing.T) {
 	// the replica set. The number of processed replicas will be 2 less.
 	const rmReplCount = 2
 	repls[0].replicaID = 2
-	require.NoError(t, tc.store.RemoveReplica(ctx,
-		repls[1], repls[1].Desc().NextReplicaID, redact.SafeString(t.Name())))
+	if err := tc.store.RemoveReplica(ctx, repls[1], repls[1].Desc().NextReplicaID, RemoveOptions{
+		DestroyData: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Remove error and reprocess.
 	testQueue.err = nil
@@ -1495,43 +1500,6 @@ func TestBaseQueueCallbackOnEnqueueResult(t *testing.T) {
 		require.True(t, queued)
 		require.Equal(t, int64(1), bq.enqueueAdd.Count())
 		require.Equal(t, int64(0), bq.enqueueUnexpectedError.Count())
-	})
-	t.Run("queuesizeshrinking", func(t *testing.T) {
-		testQueue := &testQueueImpl{}
-		const oldMaxSize = 15
-		const newMaxSize = 5
-		expectedEnqueueErrorCount := oldMaxSize - newMaxSize
-		bq := makeTestBaseQueue("test", testQueue, tc.store, queueConfig{maxSize: oldMaxSize})
-		r, err := tc.store.GetReplica(1)
-		require.NoError(t, err)
-		var enqueueErrorCount atomic.Int64
-		// Max size is 10, so the replica should be enqueued.
-		for i := 0; i < oldMaxSize; i++ {
-			r.Desc().RangeID = roachpb.RangeID(i + 1)
-			queued, _ := bq.testingAddWithCallback(ctx, r, 1.0, processCallback{
-				onEnqueueResult: func(indexOnHeap int, err error) {
-					if err != nil {
-						enqueueErrorCount.Add(1)
-					}
-				},
-				onProcessResult: func(err error) {
-					t.Fatal("unexpected call to onProcessResult")
-				},
-			})
-			require.True(t, queued)
-		}
-		require.Equal(t, int64(oldMaxSize), bq.enqueueAdd.Count())
-		require.Equal(t, int64(0), bq.enqueueUnexpectedError.Count())
-
-		// Set max size to 5 and add more replicas.
-		bq.SetMaxSize(newMaxSize)
-		testutils.SucceedsSoon(t, func() error {
-			if enqueueErrorCount.Load() != int64(expectedEnqueueErrorCount) {
-				return errors.Errorf("expected %d enqueue errors; got %d",
-					expectedEnqueueErrorCount, enqueueErrorCount.Load())
-			}
-			return nil
-		})
 	})
 }
 

@@ -115,21 +115,6 @@ func WithExtraMountOpts(extraMountOpts string) WithExtraMountOptsOverride {
 	return WithExtraMountOptsOverride{ExtraMountOpts: extraMountOpts}
 }
 
-// WithBootDiskOnlyOverride is an override for the BootDiskOnly field.
-type WithBootDiskOnlyOverride struct {
-	BootDiskOnly bool
-}
-
-// apply applies the BootDiskOnly override to the StartupArgs.
-func (o WithBootDiskOnlyOverride) apply(args *StartupArgs) {
-	args.BootDiskOnly = o.BootDiskOnly
-}
-
-// WithBootDiskOnly overrides the BootDiskOnly field.
-func WithBootDiskOnly(bootDiskOnly bool) WithBootDiskOnlyOverride {
-	return WithBootDiskOnlyOverride{BootDiskOnly: bootDiskOnly}
-}
-
 // WithUseMultipleDisksOverride is an override for the UseMultipleDisks field.
 type WithUseMultipleDisksOverride struct {
 	UseMultipleDisks bool
