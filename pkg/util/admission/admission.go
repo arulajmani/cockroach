@@ -121,7 +121,6 @@
 package admission
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/util/admission/admissionpb"
@@ -143,17 +142,6 @@ const (
 	noBurst
 	numBurstQualifications
 )
-
-func (bq burstQualification) String() string {
-	switch bq {
-	case canBurst:
-		return "canBurst"
-	case noBurst:
-		return "noBurst"
-	default:
-		return fmt.Sprintf("burstQualification(%d)", bq)
-	}
-}
 
 // Mutex ordering between requester and granter:
 //

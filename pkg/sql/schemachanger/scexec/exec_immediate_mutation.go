@@ -15,7 +15,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/nstree"
 	"github.com/cockroachdb/cockroach/pkg/sql/schemachanger/scexec/scmutationexec"
-	"github.com/cockroachdb/cockroach/pkg/sql/schemachanger/scop"
 	"github.com/cockroachdb/errors"
 )
 
@@ -28,8 +27,6 @@ type immediateState struct {
 	addedNames                 map[descpb.ID]descpb.NameInfo
 	withReset                  bool
 	sequencesToInit            []sequenceToInit
-	sequencesToSet             []SequenceToSet
-	sequencesToMaybeUpdate     []SequenceToMaybeUpdate
 	temporarySchemasToRegister map[descpb.ID]*temporarySchemaToRegister
 	modifiedZoneConfigs        []zoneConfigToUpsert
 	modifiedSubzoneConfigs     map[descpb.ID][]subzoneConfigToUpsert
@@ -52,16 +49,6 @@ type commentToUpdate struct {
 type sequenceToInit struct {
 	id       descpb.ID
 	startVal int64
-}
-
-type SequenceToSet struct {
-	ID    descpb.ID
-	Value int64
-}
-
-type SequenceToMaybeUpdate struct {
-	ID   descpb.ID
-	Opts scop.MaybeUpdateSequenceValue
 }
 
 // zoneConfigToUpsert is a struct that holds the information needed to update a
@@ -161,22 +148,6 @@ func (s *immediateState) InitSequence(id descpb.ID, startVal int64) {
 			id:       id,
 			startVal: startVal,
 		})
-}
-
-func (s *immediateState) SetSequence(id descpb.ID, value int64) {
-	s.sequencesToSet = append(s.sequencesToSet, SequenceToSet{
-		ID:    id,
-		Value: value,
-	})
-}
-
-func (s *immediateState) MaybeUpdateSequenceValue(
-	id descpb.ID, opts scop.MaybeUpdateSequenceValue,
-) {
-	s.sequencesToMaybeUpdate = append(s.sequencesToMaybeUpdate, SequenceToMaybeUpdate{
-		ID:   id,
-		Opts: opts,
-	})
 }
 
 func (s *immediateState) UpdateZoneConfig(id descpb.ID, zc *zonepb.ZoneConfig) {
@@ -301,19 +272,7 @@ func (s *immediateState) exec(ctx context.Context, c Catalog) error {
 		}
 	}
 	for _, s := range s.sequencesToInit {
-		if err := c.InitializeSequence(ctx, s.id, s.startVal); err != nil {
-			return err
-		}
-	}
-	for _, seq := range s.sequencesToSet {
-		if err := c.SetSequence(ctx, &seq); err != nil {
-			return err
-		}
-	}
-	for _, seq := range s.sequencesToMaybeUpdate {
-		if err := c.MaybeUpdateSequenceValue(ctx, &seq); err != nil {
-			return err
-		}
+		c.InitializeSequence(s.id, s.startVal)
 	}
 	for tempIdxId, tempIdxToRegister := range s.temporarySchemasToRegister {
 		c.InsertTemporarySchema(tempIdxToRegister.schemaName, tempIdxToRegister.parentID, tempIdxId)

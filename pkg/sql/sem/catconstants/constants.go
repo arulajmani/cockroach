@@ -111,7 +111,6 @@ const (
 	PreparedTransactionsTableName           SystemTableName = "prepared_transactions"
 	InspectErrorsTableName                  SystemTableName = "inspect_errors"
 	StatementHintsTableName                 SystemTableName = "statement_hints"
-	TableStatisticsLocksTableName           SystemTableName = "table_statistics_locks"
 )
 
 // Oid for virtual database and table.
@@ -320,7 +319,6 @@ const (
 	InformationSchemaViewRoutineUsageTableID
 	InformationSchemaViewTableUsageTableID
 	InformationSchemaViewsTableID
-	InformationSchemaCrdbIndexUsageStatsiticsTableID
 	PgCatalogID
 	PgCatalogAggregateTableID
 	PgCatalogAmTableID

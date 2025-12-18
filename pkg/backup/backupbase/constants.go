@@ -19,10 +19,6 @@ const (
 	// LATEST files will be stored as we no longer want to overwrite it.
 	LatestHistoryDirectory = backupMetadataDirectory + "/" + "latest"
 
-	// BackupPartitionDescriptorPrefix is the file name prefix for serialized
-	// BackupPartitionDescriptor protos.
-	BackupPartitionDescriptorPrefix = "BACKUP_PART"
-
 	// DateBasedIncFolderName is the date format used when creating sub-directories
 	// storing incremental backups for auto-appendable backups.
 	// It is exported for testing backup inspection tooling.
@@ -63,7 +59,11 @@ const (
 
 	// BackupIndexDirectoryName is the path from the root of the backup collection
 	// to the directory containing the index files for the backup collection.
-	BackupIndexDirectoryPath = backupMetadataDirectory + "/index/"
+	BackupIndexDirectoryPath = "index/"
+
+	// BackupIndexFlattenedSubdir is the format used for the top-level
+	// subdirectories within the index directory.
+	BackupIndexFlattenedSubdir = "2006-01-02-150405.00"
 
 	// BackupIndexFilenameTimestampFormat is the format used for the human
 	// readable start and end times in the index file names.

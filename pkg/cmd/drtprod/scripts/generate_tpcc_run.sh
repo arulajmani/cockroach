@@ -140,14 +140,21 @@ if [ -z "\$PGURLS" ]; then
     fi
 fi
 read -r -a PGURLS_ARR <<< "\$PGURLS"
-echo ">> Starting tpcc workload"
-LOG=./tpcc_log.txt
-./cockroach workload run tpcc $@ \
-    $partition_args \
-    --tolerate-errors \
-    --families \
-    --duration 0 \
-    \${PGURLS_ARR[@]} 2>&1 | tee \$LOG
+j=0
+while true; do
+    echo ">> Starting tpcc workload"
+    ((j++))
+    LOG=./tpcc_\$j.txt
+    ./cockroach workload run tpcc $@ \
+        $partition_args \
+        --tolerate-errors \
+        --families \
+         \${PGURLS_ARR[@]}  | tee \$LOG
+    if [ \$? -eq 0 ]; then
+        rm "\$LOG"
+    fi
+    sleep 1
+done
 EOF
 
   # Upload the script to the workload cluster

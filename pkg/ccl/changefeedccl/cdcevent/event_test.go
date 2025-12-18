@@ -536,7 +536,7 @@ CREATE TABLE foo (
 			})
 			execCfg := s.ExecutorConfig().(sql.ExecutorConfig)
 			ctx := context.Background()
-			decoder, err := NewEventDecoder(ctx, &execCfg, targets, tc.includeVirtual, tc.keyOnly, DecoderOptions{})
+			decoder, err := NewEventDecoder(ctx, &execCfg, targets, tc.includeVirtual, tc.keyOnly)
 			require.NoError(t, err)
 			expectedEvents := len(tc.expectMainFamily) + len(tc.expectOnlyCFamily)
 			for i := 0; i < expectedEvents; i++ {
@@ -780,7 +780,7 @@ func TestEventColumnOrderingWithSchemaChanges(t *testing.T) {
 			})
 			execCfg := s.ExecutorConfig().(sql.ExecutorConfig)
 			ctx := context.Background()
-			decoder, err := NewEventDecoder(ctx, &execCfg, targets, tc.includeVirtual, false, DecoderOptions{})
+			decoder, err := NewEventDecoder(ctx, &execCfg, targets, tc.includeVirtual, false)
 			require.NoError(t, err)
 
 			expectedEvents := len(tc.expectMainFamily) + len(tc.expectECFamily)
@@ -1098,7 +1098,7 @@ CREATE TABLE foo (
 	})
 	execCfg := s.ExecutorConfig().(sql.ExecutorConfig)
 	ctx := context.Background()
-	decoder, err := NewEventDecoder(ctx, &execCfg, targets, false, false, DecoderOptions{})
+	decoder, err := NewEventDecoder(ctx, &execCfg, targets, false, false)
 	if err != nil {
 		b.Fatal(err)
 	}

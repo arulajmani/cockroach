@@ -24,7 +24,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/sql"
 	"github.com/cockroachdb/cockroach/pkg/testutils/jobutils"
-	"github.com/cockroachdb/cockroach/pkg/testutils/skip"
 	"github.com/cockroachdb/cockroach/pkg/util"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
@@ -39,13 +38,7 @@ func TestBackupRestoreResolveDestination(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	skip.UnderRace(t, "multinode clusters are slow under race")
-
-	var params base.TestClusterArgs
-	params.ServerArgs.DefaultDRPCOption = base.TestDRPCDisabled
-
-	tc, _, _, cleanupFn := backuptestutils.StartBackupRestoreTestCluster(t,
-		backuptestutils.MultiNode, backuptestutils.WithParams(params))
+	tc, _, _, cleanupFn := backuptestutils.StartBackupRestoreTestCluster(t, backuptestutils.MultiNode)
 	defer cleanupFn()
 
 	ctx := context.Background()

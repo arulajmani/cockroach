@@ -144,6 +144,9 @@ var virtualClustersHandler = http.HandlerFunc(func(w http.ResponseWriter, req *h
 })
 
 // setupRoutes configures HTTP routes for the server.
+//
+// TODO(shubham,server): Remove unauthenticatedGWMux once apiinternal supports
+// all RPC prefixes.
 func (s *httpServer) setupRoutes(
 	ctx context.Context,
 	execCfg *sql.ExecutorConfig,
@@ -152,12 +155,12 @@ func (s *httpServer) setupRoutes(
 	adminAuthzCheck privchecker.CheckerForRPCHandlers,
 	metricSource metricMarshaler,
 	runtimeStatSampler *status.RuntimeStatSampler,
+	unauthenticatedGWMux http.Handler,
 	unauthenticatedAPIInternalServer http.Handler,
 	handleDebugUnauthenticated http.Handler,
 	handleInspectzUnauthenticated http.Handler,
 	apiServer http.Handler,
 	flags serverpb.FeatureFlags,
-	drpcEnabled bool,
 ) error {
 	// OIDC Configuration must happen prior to the UI Handler being defined below so that we have
 	// the system settings initialized for it to pick up from the oidcAuthenticationServer.
@@ -202,32 +205,19 @@ func (s *httpServer) setupRoutes(
 
 	// Add HTTP authentication to the gRPC-gateway endpoints used by the UI,
 	// if not disabled by configuration.
+	var authenticatedGWMux = unauthenticatedGWMux
 	var stmtBundleHandlerFunc = http.HandlerFunc(adminServer.StmtBundleHandler)
 	var txnBundleHandlerFunc = http.HandlerFunc(adminServer.TxnBundleHandler)
 	if !s.cfg.InsecureWebAccess() {
+		authenticatedGWMux = authserver.NewMux(authnServer, authenticatedGWMux, false /* allowAnonymous */)
 		stmtBundleHandlerFunc = authserver.NewMux(authnServer, stmtBundleHandlerFunc, false).ServeHTTP
 		txnBundleHandlerFunc = authserver.NewMux(authnServer, txnBundleHandlerFunc, false).ServeHTTP
 	}
 
 	// Login and logout paths.
-	// Registration of login and logout is present here since they don't actually
-	// rely on RPC but deal with HTTP cookies, which require different handling
-	// mechanisms. When DRPC is enabled, we use direct HTTP handlers that can set
-	// cookies via http.ResponseWriter. When DRPC is disabled, we use the old
-	// grpc-gateway path which sets cookies via gRPC metadata headers for backward
-	// compatibility.
-	if drpcEnabled {
-		s.mux.Handle(authserver.LoginPath, http.HandlerFunc(authnServer.LoginHandler))
-		logoutHandlerfunc := http.HandlerFunc(authnServer.LogoutHandler)
-		if !s.cfg.InsecureWebAccess() {
-			logoutHandlerfunc = authserver.NewMux(authnServer, logoutHandlerfunc, false /* allowAnonymous */).ServeHTTP
-		}
-		s.mux.Handle(authserver.LogoutPath, logoutHandlerfunc)
-	} else {
-		s.mux.Handle(authserver.LoginPath, unauthenticatedAPIInternalServer)
-		s.mux.Handle(authserver.LogoutPath, authenticatedAPIInternalServer)
-	}
-
+	// The /login endpoint is, by definition, available pre-authentication.
+	s.mux.Handle(authserver.LoginPath, unauthenticatedGWMux)
+	s.mux.Handle(authserver.LogoutPath, authenticatedGWMux)
 	s.mux.Handle(virtualClustersPath, virtualClustersHandler)
 	// The login path for 'cockroach demo', if we're currently running
 	// that.
@@ -235,7 +225,7 @@ func (s *httpServer) setupRoutes(
 		s.mux.Handle(authserver.DemoLoginPath, http.HandlerFunc(authnServer.DemoLogin))
 	}
 
-	s.mux.Handle(apiconstants.AdminPrefix, authenticatedAPIInternalServer)
+	s.mux.Handle(apiconstants.AdminPrefix, authenticatedGWMux)
 
 	// Handlers for statement diagnostic bundle download. These are special
 	// because they return zip files, not protobufs or JSON.
@@ -243,11 +233,11 @@ func (s *httpServer) setupRoutes(
 	s.mux.Handle(apiconstants.AdminTxnBundle, txnBundleHandlerFunc)
 
 	// The timeseries endpoint, used to produce graphs.
-	s.mux.Handle(ts.URLPrefix, authenticatedAPIInternalServer)
+	s.mux.Handle(ts.URLPrefix, authenticatedGWMux)
 
 	// Exempt the 2nd health check endpoint from authentication.
 	// (This simply mirrors /health and exists for backward compatibility.)
-	s.mux.Handle(apiconstants.AdminHealth, unauthenticatedAPIInternalServer)
+	s.mux.Handle(apiconstants.AdminHealth, unauthenticatedGWMux)
 	// The /_status/vars and /metrics endpoint is not authenticated either. Useful for monitoring.
 	s.mux.Handle(apiconstants.StatusVars, http.HandlerFunc(varsHandler{metricSource, s.cfg.Settings, false /* useStaticLabels */}.handleVars))
 	s.mux.Handle(apiconstants.MetricsPath, http.HandlerFunc(varsHandler{metricSource, s.cfg.Settings, true /* useStaticLabels */}.handleVars))

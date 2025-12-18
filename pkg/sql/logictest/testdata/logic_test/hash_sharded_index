@@ -1441,6 +1441,9 @@ subtest end
 subtest regression_158154
 
 statement ok
+SET use_improved_routine_deps_triggers_and_computed_cols = true;
+
+statement ok
 CREATE TABLE t158154 (col1 INT8 NOT NULL, col2 TIMESTAMP NOT NULL);
 
 statement ok
@@ -1467,5 +1470,8 @@ CALL p158154();
 statement ok
 DROP PROCEDURE p158154;
 DROP TABLE t158154;
+
+statement ok
+RESET use_improved_routine_deps_triggers_and_computed_cols;
 
 subtest end

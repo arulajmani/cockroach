@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
 	"github.com/cockroachdb/cockroach/pkg/kv"
@@ -70,6 +69,9 @@ func (r *Registry) maybeDumpTrace(resumerCtx context.Context, resumer Resumer, j
 		return
 	}
 
+	// Make a new ctx to use in the trace dumper. This is because the resumerCtx
+	// could have been canceled at this point.
+	dumpCtx, _ := r.makeCtx()
 	sp := tracing.SpanFromContext(resumerCtx)
 	if sp == nil {
 		// Should never be true since TraceableJobs force real tracing spans to be
@@ -80,13 +82,8 @@ func (r *Registry) maybeDumpTrace(resumerCtx context.Context, resumer Resumer, j
 	resumerTraceFilename := fmt.Sprintf("%s/resumer-trace/%s",
 		timeutil.Now().Format("20060102_150405.00"), r.ID().String())
 	td := jobspb.TraceData{CollectedSpans: sp.GetConfiguredRecording()}
-
-	// Make a new ctx to use in the trace dumper. This is because the resumerCtx
-	// could have been canceled at this point.
-	dumpCtx, cancel := r.makeCtx()
-	r.stopper.OnQuiesce(cancel)
 	if err := r.db.Txn(dumpCtx, func(ctx context.Context, txn isql.Txn) error {
-		return WriteProtobinExecutionDetailFile(ctx, resumerTraceFilename, &td, txn, jobID)
+		return WriteProtobinExecutionDetailFile(dumpCtx, resumerTraceFilename, &td, txn, jobID)
 	}); err != nil {
 		log.Dev.Warningf(dumpCtx, "failed to write trace on resumer trace file: %v", err)
 	}
@@ -103,8 +100,7 @@ func (r *Registry) claimJobs(ctx context.Context, s sqlliveness.Session) error {
 		}
 		numRows, err := txn.Exec(
 			ctx, "claim-jobs", txn.KV(), claimQuery,
-			s.ID().UnsafeBytes(), r.ID(), maxAdoptionsPerLoop.Get(&r.settings.SV),
-		)
+			s.ID().UnsafeBytes(), r.ID(), maxAdoptionsPerLoop)
 		if err != nil {
 			return errors.Wrap(err, "could not query jobs table")
 		}
@@ -424,27 +420,13 @@ func (r *Registry) runJob(
 	}
 
 	r.maybeRecordExecutionFailure(ctx, err, job)
+	// NB: After this point, the job may no longer have the claim
+	// and further updates to the job record from this node may
+	// fail.
+	r.maybeClearLease(job, err)
 	r.maybeDumpTrace(ctx, resumer, job.ID())
-
 	if r.knobs.AfterJobStateMachine != nil {
 		r.knobs.AfterJobStateMachine(job.ID())
-	}
-
-	// NB: After this point, the job may no longer have the claim and further
-	// updates to the job record from this node may fail.
-	if err != nil {
-		// We delay clearing the lease to avoid situations where a job fast-fails
-		// and is immediately re-adopted by another node, causing a hot loop of job
-		// status changes. See #158597 for more info.
-		//
-		// NB: The node that holds this claim also will not rerun the job until
-		// this interval elapses and the job is removed from the list of currently
-		// running jobs.
-		select {
-		case <-ctx.Done():
-		case <-time.After(r.GetLoopInterval(adoptIntervalSetting, r.knobs.IntervalOverrides.ClaimTTLOnFailure)):
-		}
-		r.maybeClearLease(job, err)
 	}
 	return err
 }
@@ -518,11 +500,6 @@ func (r *Registry) servePauseAndCancelRequests(ctx context.Context, s sqllivenes
 			job := &Job{id: id, registry: r}
 			stateString := *row[1].(*tree.DString)
 			jobTypeString := *row[2].(*tree.DString)
-
-			if err := job.Messages().Record(ctx, txn, "state", string(stateString)); err != nil {
-				return err
-			}
-
 			switch State(stateString) {
 			case StatePaused:
 				if !r.cancelRegisteredJobContext(id) {

@@ -24,7 +24,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness/livenesspb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
-	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/server/serverpb"
 	"github.com/cockroachdb/cockroach/pkg/server/status/statuspb"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
@@ -51,7 +50,6 @@ type zipRequest struct {
 
 const (
 	debugZipCommandFlagsFileName = "debug_zip_command_flags.txt"
-	debugZipAppName              = catconstants.InternalAppNamePrefix + " cockroach zip"
 )
 
 type debugZipContext struct {
@@ -232,11 +230,6 @@ func runDebugZip(cmd *cobra.Command, args []string) (retErr error) {
 		zipCtx.redact = true
 	}
 
-	if cliCtx.clientOpts.User != username.RootUser {
-		// Error is ignored because PurposeValidation does not return errors.
-		serverCfg.User, _ = username.MakeSQLUsernameFromUserInput(cliCtx.clientOpts.User, username.PurposeValidation)
-	}
-
 	var tenants []*serverpb.Tenant
 	if err := func() error {
 		s := zr.start("discovering virtual clusters")
@@ -331,7 +324,7 @@ func runDebugZip(cmd *cobra.Command, args []string) (retErr error) {
 
 			zr.sqlOutputFilenameExtension = computeSQLOutputFilenameExtension(sqlExecCtx.TableDisplayFormat)
 
-			sqlConn, err := makeTenantSQLClient(ctx, debugZipAppName, useSystemDb, tenant.TenantName)
+			sqlConn, err := makeTenantSQLClient(ctx, catconstants.InternalAppNamePrefix+" cockroach zip", useSystemDb, tenant.TenantName)
 			// The zip output is sent directly into a text file, so the results should
 			// be scanned into strings.
 			_ = sqlConn.SetAlwaysInferResultTypes(false)

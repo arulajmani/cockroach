@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/cloud"
-	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/featureflag"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
@@ -627,7 +626,7 @@ func importPlanHook(
 			}
 		}
 
-		var tableDetails jobspb.ImportDetails_Table
+		var tableDetails []jobspb.ImportDetails_Table
 		var typeDetails []jobspb.ImportDetails_Type
 		jobDesc, err := importJobDescription(ctx, p, importStmt, filenamePatterns, opts)
 		if err != nil {
@@ -713,13 +712,13 @@ func importPlanHook(
 			}
 			if len(typeDescs) > 0 {
 				typeDetails = make([]jobspb.ImportDetails_Type, 0, len(typeDescs))
-				for _, typeDesc := range typeDescs {
-					typeDetails = append(typeDetails, jobspb.ImportDetails_Type{Desc: typeDesc.TypeDesc()})
-				}
+			}
+			for _, typeDesc := range typeDescs {
+				typeDetails = append(typeDetails, jobspb.ImportDetails_Type{Desc: typeDesc.TypeDesc()})
 			}
 		}
 
-		tableDetails = jobspb.ImportDetails_Table{Desc: &found.TableDescriptor, TargetCols: intoCols}
+		tableDetails = []jobspb.ImportDetails_Table{{Desc: &found.TableDescriptor, TargetCols: intoCols}}
 
 		// Store the primary region of the database being imported into. This is
 		// used during job execution to evaluate certain default expressions and
@@ -765,21 +764,13 @@ func importPlanHook(
 		// transaction here and then in a post-commit hook we should kick of the
 		// StartableJob which we attached to the connExecutor somehow.
 
-		useDistributedMerge := UseDistributedMergeForImport.Get(&p.ExecCfg().Settings.SV)
-		if useDistributedMerge && !p.ExecCfg().Settings.Version.IsActive(ctx, clusterversion.V26_1) {
-			return pgerror.New(pgcode.FeatureNotSupported,
-				"distributed merge for IMPORT requires all nodes to be running version 26.1 or later")
-		}
-
 		importDetails := jobspb.ImportDetails{
 			URIs:                  files,
 			Format:                format,
 			ParentID:              db.GetID(),
-			Table:                 tableDetails,
-			Tables:                []jobspb.ImportDetails_Table{tableDetails},
+			Tables:                tableDetails,
 			Types:                 typeDetails,
 			DatabasePrimaryRegion: databasePrimaryRegion,
-			UseDistributedMerge:   useDistributedMerge,
 		}
 
 		jr := jobs.Record{

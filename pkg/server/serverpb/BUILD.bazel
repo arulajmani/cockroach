@@ -127,12 +127,7 @@ go_test(
     size = "medium",
     srcs = ["admin_test.go"],
     embed = [":serverpb"],
-    deps = [
-        "//pkg/util/metric",
-        "@com_github_prometheus_client_model//go",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-    ],
+    deps = ["@com_github_stretchr_testify//assert"],
 )
 
 disallowed_imports_test(

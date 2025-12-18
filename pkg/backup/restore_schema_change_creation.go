@@ -15,7 +15,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/security/username"
-	"github.com/cockroachdb/cockroach/pkg/sql"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	descpb "github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/tabledesc"
@@ -196,9 +195,6 @@ func createSchemaChangeJobsFromMutations(
 				spanList[i] = jobspb.ResumeSpanList{ResumeSpans: []roachpb.Span{tableDesc.PrimaryIndexSpan(codec)}}
 			}
 		}
-		// Populate session data for schema changes that require it.
-		sd := sql.NewInternalSessionData(ctx, jr.ClusterSettings(), "schema-change-restore")
-		sd.UserProto = username.EncodeProto()
 		jobRecord := jobs.Record{
 			// We indicate that this schema change was triggered by a RESTORE since
 			// the job description may not have all the information to fully describe
@@ -210,7 +206,6 @@ func createSchemaChangeJobsFromMutations(
 				DescID:          tableDesc.ID,
 				TableMutationID: mutationID,
 				ResumeSpanList:  spanList,
-				SessionData:     &sd.SessionData,
 				// The version distinction for database jobs doesn't matter for a schema
 				// change on a single table.
 				FormatVersion: jobspb.DatabaseJobFormatVersion,

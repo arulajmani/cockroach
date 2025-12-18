@@ -41,7 +41,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/test"
 	"github.com/cockroachdb/cockroach/pkg/roachprod"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/cloud"
-	cloudcluster "github.com/cockroachdb/cockroach/pkg/roachprod/cloud/types"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/config"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/failureinjection/failures"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/install"
@@ -326,10 +325,7 @@ func initBinariesAndLibraries() {
 	cockroachPath := roachtestflags.CockroachPath
 	cockroachEAPath := roachtestflags.CockroachEAPath
 	workloadPath := roachtestflags.WorkloadPath
-	// Skip cockroach binary validation if using --cockroach-stage
-	if roachtestflags.CockroachStage == "" {
-		cockroach[defaultArch], _ = resolveBinary("cockroach", cockroachPath, defaultArch, true, false)
-	}
+	cockroach[defaultArch], _ = resolveBinary("cockroach", cockroachPath, defaultArch, true, false)
 	// Let the test runner verify the workload binary exists if TestSpec.RequiresDeprecatedWorkload is true.
 	workload[defaultArch], _ = resolveBinary("workload", workloadPath, defaultArch, false, false)
 	cockroachEA[defaultArch], err = resolveBinary("cockroach-ea", cockroachEAPath, defaultArch, false, true)
@@ -340,9 +336,7 @@ func initBinariesAndLibraries() {
 	if roachtestflags.ARM64Probability > 0 && defaultArch != vm.ArchARM64 {
 		fmt.Printf("Locating and verifying binaries for os=%q, arch=%q\n", defaultOSName, vm.ArchARM64)
 		// We need to verify we have all the required binaries for arm64.
-		if roachtestflags.CockroachStage == "" {
-			cockroach[vm.ArchARM64], _ = resolveBinary("cockroach", cockroachPath, vm.ArchARM64, true, false)
-		}
+		cockroach[vm.ArchARM64], _ = resolveBinary("cockroach", cockroachPath, vm.ArchARM64, true, false)
 		workload[vm.ArchARM64], _ = resolveBinary("workload", workloadPath, vm.ArchARM64, true, false)
 		cockroachEA[vm.ArchARM64], err = resolveBinary("cockroach-ea", cockroachEAPath, vm.ArchARM64, false, true)
 		if err != nil {
@@ -352,9 +346,7 @@ func initBinariesAndLibraries() {
 	if roachtestflags.FIPSProbability > 0 && defaultArch != vm.ArchFIPS {
 		fmt.Printf("Locating and verifying binaries for os=%q, arch=%q\n", defaultOSName, vm.ArchFIPS)
 		// We need to verify we have all the required binaries for fips.
-		if roachtestflags.CockroachStage == "" {
-			cockroach[vm.ArchFIPS], _ = resolveBinary("cockroach", cockroachPath, vm.ArchFIPS, true, false)
-		}
+		cockroach[vm.ArchFIPS], _ = resolveBinary("cockroach", cockroachPath, vm.ArchFIPS, true, false)
 		workload[vm.ArchFIPS], _ = resolveBinary("workload", workloadPath, vm.ArchFIPS, true, false)
 		cockroachEA[vm.ArchFIPS], err = resolveBinary("cockroach-ea", cockroachEAPath, vm.ArchFIPS, false, true)
 		if err != nil {
@@ -798,7 +790,7 @@ type clusterFactory struct {
 	// counter is incremented with every new cluster. It's used as part of the cluster's name.
 	// Accessed atomically.
 	counter atomic.Uint64
-	// The registry with whom all clusters will be registered.
+	// The registry with whom all clustered will be registered.
 	r *clusterRegistry
 	// artifactsDir is the directory in which the cluster creation log file will be placed.
 	artifactsDir string
@@ -978,7 +970,7 @@ func (f *clusterFactory) newCluster(
 		if i > 1 {
 			retryStr = "-retry" + strconv.Itoa(i-1)
 		}
-		logPath := filepath.Join(f.artifactsDir, runnerLogsDir, clusterCreateDir, genName+retryStr+".log")
+		logPath := filepath.Join(f.artifactsDir, runnerLogsDir, "cluster-create", genName+retryStr+".log")
 		l, err := logger.RootLogger(logPath, teeOpt)
 		if err != nil {
 			log.Fatalf("%v", err)
@@ -1414,7 +1406,7 @@ func (c *clusterImpl) FetchDebugZip(
 			//
 			// Ignore the files in the log directory; we pull the logs separately anyway
 			// so this would only cause duplication.
-			excludeFiles := "*.log"
+			excludeFiles := "*.log,*.pprof"
 
 			cmd := roachtestutil.NewCommand("%s debug zip", test.DefaultCockroachPath).
 				Option("include-range-info").
@@ -1910,7 +1902,7 @@ func (c *clusterImpl) CreateSnapshot(
 func (c *clusterImpl) ApplySnapshots(ctx context.Context, snapshots []vm.VolumeSnapshot) error {
 	opts := vm.VolumeCreateOpts{
 		Size: c.spec.VolumeSize,
-		Type: c.spec.VolumeType,
+		Type: c.spec.GCE.VolumeType, // TODO(irfansharif): This is only applicable to GCE. Change that.
 		Labels: map[string]string{
 			vm.TagUsage: "roachtest",
 		},
@@ -1947,11 +1939,7 @@ func (c *clusterImpl) PutE(
 func (c *clusterImpl) PutCockroach(ctx context.Context, l *logger.Logger, t *testImpl) error {
 	if roachtestflags.CockroachStage != "" {
 		// Use staging instead of upload when --cockroach-stage is specified
-		stageVersion := roachtestflags.CockroachStage
-		if stageVersion == "latest" {
-			stageVersion = "" // Stage() expects empty string for latest
-		}
-		return c.Stage(ctx, l, "cockroach", stageVersion, ".", c.All())
+		return c.Stage(ctx, l, "cockroach", roachtestflags.CockroachStage, ".", c.All())
 	}
 	return c.PutE(ctx, l, t.Cockroach(), test.DefaultCockroachPath, c.All())
 }
@@ -2722,6 +2710,9 @@ func (c *clusterImpl) InternalPGUrl(
 	return c.pgURLErr(ctx, l, nodes, opts)
 }
 
+// Silence unused warning.
+var _ = (&clusterImpl{}).InternalPGUrl
+
 // ExternalPGUrl returns the external Postgres endpoint for the specified nodes.
 func (c *clusterImpl) ExternalPGUrl(
 	ctx context.Context, l *logger.Logger, nodes option.NodeListOption, opts roachprod.PGURLOptions,
@@ -2984,7 +2975,6 @@ func (c *clusterImpl) ConnE(
 	for k, v := range connOptions.ConnectionOptions {
 		vals.Add(k, v)
 	}
-	vals["allow_unsafe_internals"] = []string{"true"}
 
 	if _, ok := vals["connect_timeout"]; !ok {
 		// connect_timeout is a libpq-specific parameter for the maximum
@@ -3276,7 +3266,7 @@ func randomArch(
 }
 
 // bucketVMsByProvider buckets cachedCluster.VMs by provider.
-func bucketVMsByProvider(cachedCluster *cloudcluster.Cluster) map[string][]vm.VM {
+func bucketVMsByProvider(cachedCluster *cloud.Cluster) map[string][]vm.VM {
 	providerToVMs := make(map[string][]vm.VM)
 	for _, vm := range cachedCluster.VMs {
 		providerToVMs[vm.Provider] = append(providerToVMs[vm.Provider], vm)
@@ -3286,7 +3276,7 @@ func bucketVMsByProvider(cachedCluster *cloudcluster.Cluster) map[string][]vm.VM
 
 // getCachedCluster checks if the passed cluster name is present in cached clusters
 // and returns an error if not found.
-func getCachedCluster(clusterName string) (*cloudcluster.Cluster, error) {
+func getCachedCluster(clusterName string) (*cloud.Cluster, error) {
 	cachedCluster, ok := roachprod.CachedCluster(clusterName)
 	if !ok {
 		var availableClusters []string

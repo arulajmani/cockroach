@@ -31,7 +31,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
-	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/require"
 	yaml "gopkg.in/yaml.v2"
 )
@@ -40,11 +39,7 @@ func TestListSessionsV2(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	testCluster := serverutils.StartCluster(t, 3, base.TestClusterArgs{
-		ServerArgs: base.TestServerArgs{
-			DefaultDRPCOption: base.TestDRPCDisabled,
-		},
-	})
+	testCluster := serverutils.StartCluster(t, 3, base.TestClusterArgs{})
 	ctx := context.Background()
 	defer testCluster.Stopper().Stop(ctx)
 
@@ -386,16 +381,10 @@ func TestCheckRestartSafe_Criticality(t *testing.T) {
 	err = drain(ctx, ts1, t)
 	require.NoError(t, err)
 
-	testutils.SucceedsSoon(t, func() error {
-		res, err = checkRestartSafe(ctx, ts1.NodeID(), ts1.NodeLiveness().(livenesspb.NodeVitalityInterface), ts1.GetStores().(storeVisitor), 3, false)
-		if err != nil {
-			return err
-		}
-		if !res.IsRestartSafe {
-			return errors.New("expected IsRestartSafe to be true")
-		}
-		return nil
-	})
+	res, err = checkRestartSafe(ctx, ts1.NodeID(), ts1.NodeLiveness().(livenesspb.NodeVitalityInterface), ts1.GetStores().(storeVisitor), 3, false)
+	// Now that we've drained, we're ok to restart
+	require.NoError(t, err)
+	require.True(t, res.IsRestartSafe)
 }
 
 // TestCheckRestartSafe_RangeStatus verifies that checkRestartSafe is

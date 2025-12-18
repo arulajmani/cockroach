@@ -119,7 +119,6 @@ type s3Storage struct {
 	prefix         string
 	metrics        *cloud.Metrics
 	storageOptions cloud.ExternalStorageOptions
-	uri            string // original URI used to construct this storage
 
 	opts   s3ClientConfig
 	cached *s3Client
@@ -333,7 +332,6 @@ func parseS3URL(uri *url.URL) (cloudpb.ExternalStorage, error) {
 	}
 
 	conf.Provider = cloudpb.ExternalStorageProvider_s3
-	conf.URI = uri.String()
 
 	// TODO(rui): currently the value of AssumeRoleParam is written into both of
 	// the RoleARN fields and the RoleProvider fields in order to support a mixed
@@ -521,7 +519,6 @@ func MakeS3Storage(
 		settings:       args.Settings,
 		opts:           clientConfig(conf),
 		storageOptions: args.ExternalStorageOptions(),
-		uri:            dest.URI,
 	}
 
 	reuse := reuseSession.Get(&args.Settings.SV)
@@ -750,7 +747,6 @@ func (s *s3Storage) Conf() cloudpb.ExternalStorage {
 	return cloudpb.ExternalStorage{
 		Provider: cloudpb.ExternalStorageProvider_s3,
 		S3Config: s.conf,
-		URI:      s.uri,
 	}
 }
 
