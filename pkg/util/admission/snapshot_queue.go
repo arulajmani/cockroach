@@ -7,7 +7,6 @@ package admission
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -28,16 +27,7 @@ type snapshotWorkItem struct {
 	mu             struct {
 		// These fields are updated after creation. The mutex in SnapshotQueue must
 		// be held to read and write to these fields.
-
-		// The granted value transitions at most once from false to true. Granting
-		// can race with context cancellation, so when context cancellation is
-		// processed, it is possible that the grant was already made. In that
-		// case, the grant needs to be returned.
-		granted bool
-		// The cancelled value transitions at most once from false to true. Since
-		// cancelled items are not immediately removed from SnapshotQueue.mu.q,
-		// this bool tells the queue to ignore (and lazily remove) an item that
-		// has been cancelled, when a grant happens.
+		inQueue   bool
 		cancelled bool
 	}
 }
@@ -59,7 +49,8 @@ var snapshotWorkItemPool = sync.Pool{
 var DiskBandwidthForSnapshotIngest = settings.RegisterBoolSetting(
 	settings.SystemOnly, "kvadmission.store.snapshot_ingest_bandwidth_control.enabled",
 	"if set to true, snapshot ingests will be subject to disk write control in AC",
-	metamorphic.ConstantWithTestBool("kvadmission.store.snapshot_ingest_bandwidth_control.enabled", true),
+	// TODO(aaditya): Enable by default once enough experimentation is done.
+	metamorphic.ConstantWithTestBool("kvadmission.store.snapshot_ingest_bandwidth_control.enabled", false),
 	settings.WithPublic,
 )
 
@@ -123,10 +114,10 @@ func makeSnapshotQueue(snapshotGranter granter, metrics *SnapshotMetrics) *Snaps
 var _ requester = &SnapshotQueue{}
 var _ snapshotRequester = &SnapshotQueue{}
 
-func (s *SnapshotQueue) hasWaitingRequests() (bool, burstQualification) {
+func (s *SnapshotQueue) hasWaitingRequests() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return !s.mu.q.Empty(), canBurst /*arbitrary*/
+	return !s.mu.q.Empty()
 }
 
 func (s *SnapshotQueue) granted(_ grantChainID) int64 {
@@ -147,7 +138,6 @@ func (s *SnapshotQueue) granted(_ grantChainID) int64 {
 		break
 	}
 	count := item.count
-	item.mu.granted = true
 	// After signalling to the channel, we transfer ownership of item back to the
 	// `Admit` goroutine, it should no longer be accessed here.
 	item.admitCh <- true
@@ -173,7 +163,7 @@ func (s *SnapshotQueue) Admit(ctx context.Context, count int64) error {
 		s.snapshotGranter.returnGrant(count)
 		return nil
 	}
-	if s.snapshotGranter.tryGet(canBurst /*arbitrary*/, count) {
+	if s.snapshotGranter.tryGet(count) {
 		return nil
 	}
 	// We were unable to get tokens for admission, so we queue.
@@ -207,7 +197,7 @@ func (s *SnapshotQueue) Admit(ctx context.Context, count int64) error {
 		func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			if item.mu.granted {
+			if !item.mu.inQueue {
 				// NB: we must call snapshotGranter.returnGrant after releasing the
 				// mutex.
 				tokensToReturn = item.count
@@ -224,14 +214,11 @@ func (s *SnapshotQueue) Admit(ctx context.Context, count int64) error {
 			s.snapshotGranter.returnGrant(tokensToReturn)
 		}
 		shouldRelease = false
+		deadline, _ := ctx.Deadline()
 		s.metrics.WaitDurations.RecordValue(waitDur)
-		var deadlineSubstring string
-		if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
-			deadlineSubstring = fmt.Sprintf("deadline: %v, ", deadline)
-		}
 		return errors.Wrapf(ctx.Err(),
-			"context canceled while waiting in queue: %sstart: %v, dur: %v",
-			deadlineSubstring, item.enqueueingTime, waitDur)
+			"context canceled while waiting in queue: deadline: %v, start: %v, dur: %v",
+			deadline, item.enqueueingTime, waitDur)
 	case <-item.admitCh:
 		waitDur := timeutil.Since(item.enqueueingTime).Nanoseconds()
 		s.metrics.WaitDurations.RecordValue(waitDur)
@@ -242,6 +229,7 @@ func (s *SnapshotQueue) Admit(ctx context.Context, count int64) error {
 func (s *SnapshotQueue) addLocked(item *snapshotWorkItem) {
 	item.enqueueingTime = timeutil.Now()
 	s.mu.q.Enqueue(item)
+	item.mu.inQueue = true
 }
 
 func (s *SnapshotQueue) popLocked() *snapshotWorkItem {
@@ -249,6 +237,7 @@ func (s *SnapshotQueue) popLocked() *snapshotWorkItem {
 	if !ok {
 		return nil
 	}
+	item.mu.inQueue = false
 	return item
 }
 
@@ -283,7 +272,7 @@ func newSnapshotWorkItem(count int64) *snapshotWorkItem {
 		count:          count,
 	}
 	item.mu.cancelled = false
-	item.mu.granted = false
+	item.mu.inQueue = false
 	return item
 }
 

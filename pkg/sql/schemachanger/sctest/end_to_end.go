@@ -58,7 +58,6 @@ func EndToEndSideEffects(t *testing.T, relTestCaseDir string, factory TestServer
 	// These tests are expensive.
 	skip.UnderStress(t)
 	skip.UnderRace(t)
-	skip.UnderDeadlock(t)
 
 	ctx := context.Background()
 	testCaseDir := datapathutils.RewritableDataPath(t, relTestCaseDir)
@@ -133,15 +132,14 @@ func EndToEndSideEffects(t *testing.T, relTestCaseDir string, factory TestServer
 					sctestdeps.WithNamespace(sctestdeps.ReadNamespaceFromDB(t, tdb).Catalog),
 					sctestdeps.WithCurrentDatabase(sctestdeps.ReadCurrentDatabaseFromDB(t, tdb)),
 					sctestdeps.WithSessionData(sctestdeps.ReadSessionDataFromDB(t, tdb, func(
-						sd *sessiondata.SessionData, localData sessiondatapb.LocalOnlySessionData,
+						sd *sessiondata.SessionData,
 					) {
 						// For setting up a builder inside tests we will ensure that the new schema
 						// changer will allow non-fully implemented operations.
-						sd.NewSchemaChangerMode = sessiondatapb.UseNewSchemaChangerUnsafeAlways
+						sd.NewSchemaChangerMode = sessiondatapb.UseNewSchemaChangerUnsafe
 						sd.TempTablesEnabled = true
 						sd.ApplicationName = ""
 						sd.EnableUniqueWithoutIndexConstraints = true // this allows `ADD UNIQUE WITHOUT INDEX` in the testing suite.
-						sd.SerialNormalizationMode = localData.SerialNormalizationMode
 					})),
 					sctestdeps.WithTestingKnobs(&scexec.TestingKnobs{
 						BeforeStage: func(p scplan.Plan, stageIdx int) error {
@@ -153,7 +151,6 @@ func EndToEndSideEffects(t *testing.T, relTestCaseDir string, factory TestServer
 					sctestdeps.WithComments(sctestdeps.ReadCommentsFromDB(t, tdb)),
 					sctestdeps.WithIDGenerator(s.ApplicationLayer()),
 					sctestdeps.WithReferenceProviderFactory(refFactory),
-					sctestdeps.WithClusterSettings(s.ClusterSettings()),
 				)
 				stmtStates := execStatementWithTestDeps(ctx, t, deps, stmts...)
 				var fileNameSuffix string
@@ -254,8 +251,6 @@ func checkExplainDiagrams(
 		require.NoError(t, err)
 		out, err := fn()
 		require.NoError(t, err)
-		// Normalize non-deterministic values in the explain output.
-		out = replaceNonDeterministicOutput(out)
 		_, err = io.WriteString(file, out)
 		require.NoError(t, err)
 	}
@@ -298,21 +293,12 @@ func checkExplainDiagrams(
 // scheduleIDRegexp captures either `scheduleId: 384784` or `scheduleId: "374764"`.
 var scheduleIDRegexp = regexp.MustCompile(`scheduleId: "?[0-9]+"?`)
 
-// scheduleIDJSONRegexp captures `"ScheduleID":1234567890` in JSON output.
-var scheduleIDJSONRegexp = regexp.MustCompile(`"ScheduleID":[0-9]+`)
-
-// scheduleIDLogRegexp captures `#1234567890` schedule IDs in log output like
-// "update ttl schedule cron #1234567890 to ...".
-var scheduleIDLogRegexp = regexp.MustCompile(`(update ttl schedule cron )#[0-9]+`)
-
 // dropTimeRegexp captures either `dropTime: \"time\"`.
 var dropTimeRegexp = regexp.MustCompile("dropTime: \"[0-9]+")
 
 func replaceNonDeterministicOutput(text string) string {
 	// scheduleIDs change based on execution time, so redact the output.
 	nextString := scheduleIDRegexp.ReplaceAllString(text, "scheduleId: <redacted>")
-	nextString = scheduleIDJSONRegexp.ReplaceAllString(nextString, `"ScheduleID":<redacted>`)
-	nextString = scheduleIDLogRegexp.ReplaceAllString(nextString, "${1}#<redacted>")
 	return dropTimeRegexp.ReplaceAllString(nextString, "dropTime: <redacted>")
 }
 

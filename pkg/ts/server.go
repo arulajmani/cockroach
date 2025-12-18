@@ -15,7 +15,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/ts/tspb"
-	"github.com/cockroachdb/cockroach/pkg/ts/tsutil"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
@@ -27,7 +26,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"storj.io/drpc"
 )
 
 const (
@@ -135,15 +133,6 @@ func (s *TenantServer) RegisterService(g *grpc.Server) {
 	tspb.RegisterTimeSeriesServer(g, s)
 }
 
-type drpcTenantServer struct {
-	*TenantServer
-}
-
-// RegisterService registers the DRPC service.
-func (s *TenantServer) RegisterDRPCService(d drpc.Mux) error {
-	return tspb.DRPCRegisterTimeSeries(d, &drpcTenantServer{TenantServer: s})
-}
-
 // RegisterGateway starts the gateway (i.e. reverse proxy) that proxies HTTP requests
 // to the appropriate gRPC endpoints.
 func (s *TenantServer) RegisterGateway(
@@ -196,13 +185,13 @@ func MakeServer(
 		stopper:        stopper,
 		nodeCountFn:    nodeCountFn,
 		workerMemMonitor: mon.NewMonitorInheritWithLimit(
-			mon.MakeName("timeseries-workers"),
+			"timeseries-workers",
 			queryMemoryMax*2,
 			memoryMonitor,
 			true, /* longLiving */
 		),
 		resultMemMonitor: mon.NewMonitorInheritWithLimit(
-			mon.MakeName("timeseries-results"),
+			"timeseries-results",
 			math.MaxInt64,
 			memoryMonitor,
 			true, /* longLiving */
@@ -219,15 +208,6 @@ func MakeServer(
 // RegisterService registers the GRPC service.
 func (s *Server) RegisterService(g *grpc.Server) {
 	tspb.RegisterTimeSeriesServer(g, s)
-}
-
-type drpcServer struct {
-	*Server
-}
-
-// RegisterService registers the DRPC service.
-func (s *Server) RegisterDRPCService(d drpc.Mux) error {
-	return tspb.DRPCRegisterTimeSeries(d, &drpcServer{Server: s})
 }
 
 // RegisterGateway starts the gateway (i.e. reverse proxy) that proxies HTTP requests
@@ -397,16 +377,6 @@ func (s *Server) Query(
 // set up a KV store and write some keys into it (`MakeDataKey`) to do so without
 // setting up a `*Server`.
 func (s *Server) Dump(req *tspb.DumpRequest, stream tspb.TimeSeries_DumpServer) error {
-	return s.dump(req, stream)
-}
-
-// Dump returns a stream of raw timeseries data that has been stored on the
-// server.
-func (s *drpcServer) Dump(req *tspb.DumpRequest, stream tspb.DRPCTimeSeries_DumpStream) error {
-	return s.dump(req, stream)
-}
-
-func (s *Server) dump(req *tspb.DumpRequest, stream tspb.RPCTimeSeries_DumpStream) error {
 	d := DefaultDumper{stream.Send}.Dump
 	return dumpImpl(stream.Context(), s.db.db, req, d)
 
@@ -414,50 +384,8 @@ func (s *Server) dump(req *tspb.DumpRequest, stream tspb.RPCTimeSeries_DumpStrea
 
 // DumpRaw is like Dump, but it returns a stream of raw KV pairs.
 func (s *Server) DumpRaw(req *tspb.DumpRequest, stream tspb.TimeSeries_DumpRawServer) error {
-	return s.dumpRaw(req, stream)
-}
-
-// DumpRaw is like Dump, but it returns a stream of raw KV pairs.
-func (s *drpcServer) DumpRaw(
-	req *tspb.DumpRequest, stream tspb.DRPCTimeSeries_DumpRawStream,
-) error {
-	return s.dumpRaw(req, stream)
-}
-
-func (s *Server) dumpRaw(req *tspb.DumpRequest, stream tspb.RPCTimeSeries_DumpRawStream) error {
 	d := rawDumper{stream}.Dump
 	return dumpImpl(stream.Context(), s.db.db, req, d)
-}
-
-// DumpRaw is like Dump, but it returns a stream of raw KV pairs.
-func (s *drpcTenantServer) DumpRaw(_ *tspb.DumpRequest, _ tspb.DRPCTimeSeries_DumpRawStream) error {
-	return s.dumpRaw()
-}
-
-func (t *TenantServer) DumpRaw(_ *tspb.DumpRequest, _ tspb.TimeSeries_DumpRawServer) error {
-	return t.dumpRaw()
-}
-
-func (t *TenantServer) dumpRaw() error {
-	return status.Errorf(codes.Unimplemented, "DumpRaw is not implemented for virtual clusters. "+
-		"If you are attempting to take a tsdump, please connect to the system virtual cluster, "+
-		"not an application virtual cluster. System virtual clusters will dump all persisted "+
-		"metrics from all virtual clusters.")
-}
-
-func (s *drpcTenantServer) Dump(_ *tspb.DumpRequest, _ tspb.DRPCTimeSeries_DumpStream) error {
-	return s.dump()
-}
-
-func (t *TenantServer) Dump(_ *tspb.DumpRequest, _ tspb.TimeSeries_DumpServer) error {
-	return t.dump()
-}
-
-func (t *TenantServer) dump() error {
-	return status.Errorf(codes.Unimplemented, "Dump is not implemented for virtual clusters. "+
-		"If you are attempting to take a tsdump, please connect to the system virtual cluster, "+
-		"not an application virtual cluster. System virtual clusters will dump all persisted "+
-		"metrics from all virtual clusters.")
 }
 
 func dumpImpl(
@@ -482,30 +410,10 @@ func dumpImpl(
 				ResolutionFromProto(res),
 				req.StartNanos,
 				req.EndNanos,
-				false,
 				d,
 			); err != nil {
 				return err
 			}
-		}
-	}
-
-	// Dump child metrics only for allowed metrics at 1M resolution
-	for _, seriesName := range req.Names {
-		if !tsutil.IsAllowedChildMetric(seriesName) {
-			continue
-		}
-		if err := dumpTimeseriesAllSources(
-			ctx,
-			db,
-			seriesName,
-			Resolution1m,
-			req.StartNanos,
-			req.EndNanos,
-			true,
-			d,
-		); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -544,7 +452,7 @@ func (dd DefaultDumper) Dump(kv *roachpb.KeyValue) error {
 }
 
 type rawDumper struct {
-	stream tspb.RPCTimeSeries_DumpRawStream
+	stream tspb.TimeSeries_DumpRawServer
 }
 
 func (rd rawDumper) Dump(kv *roachpb.KeyValue) error {
@@ -557,7 +465,6 @@ func dumpTimeseriesAllSources(
 	seriesName string,
 	diskResolution Resolution,
 	startNanos, endNanos int64,
-	includeChildMetrics bool,
 	dump func(*roachpb.KeyValue) error,
 ) error {
 	if endNanos == 0 {
@@ -570,20 +477,12 @@ func dumpTimeseriesAllSources(
 		endNanos += delta
 	}
 
-	var endKeyName string
-	if includeChildMetrics {
-		// Create a span that covers the metric's children.
-		endKeyName = seriesName + string(rune(0x7C)) // '|' is the next char after '{'
-	} else {
-		endKeyName = seriesName
-	}
-
 	span := &roachpb.Span{
 		Key: MakeDataKey(
 			seriesName, "" /* source */, diskResolution, startNanos,
 		),
 		EndKey: MakeDataKey(
-			endKeyName, "" /* source */, diskResolution, endNanos,
+			seriesName, "" /* source */, diskResolution, endNanos,
 		),
 	}
 

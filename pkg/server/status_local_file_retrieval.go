@@ -113,11 +113,6 @@ func stacksLocal(req *serverpb.StacksRequest) (*serverpb.JSONResponse, error) {
 		if err := pprof.Lookup("goroutine").WriteTo(buf, 1 /* debug */); err != nil {
 			return nil, status.Errorf(codes.Unknown, "failed to write goroutine stack: %s", err)
 		}
-	case serverpb.StacksType_GOROUTINE_STACKS_DEBUG_3:
-		buf = bytes.NewBuffer(nil)
-		if err := pprof.Lookup("goroutine").WriteTo(buf, 3 /* debug */); err != nil {
-			return nil, status.Errorf(codes.Unknown, "failed to write goroutine stack: %s", err)
-		}
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown stacks type: %s", req.Type)
 	}
@@ -131,7 +126,6 @@ func getLocalFiles(
 	heapProfileDirName string,
 	goroutineDumpDirName string,
 	cpuProfileDirName string,
-	executionTraceDirName string,
 	statFileFn func(string) (os.FileInfo, error),
 	readFileFn func(string) ([]byte, error),
 ) (*serverpb.GetFilesResponse, error) {
@@ -145,8 +139,6 @@ func getLocalFiles(
 		dir = goroutineDumpDirName
 	case serverpb.FileType_CPU: // Requesting for saved CPU Profiles.
 		dir = cpuProfileDirName
-	case serverpb.FileType_EXECUTIONTRACE:
-		dir = executionTraceDirName
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown file type: %s", req.Type)
 	}

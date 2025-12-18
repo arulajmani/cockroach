@@ -354,7 +354,6 @@ func runOneRoundQueryComparison(
 			sqlsmith.SetComplexity(.3),
 			sqlsmith.SetScalarComplexity(.1),
 			sqlsmith.SimpleNames(),
-			sqlsmith.DisableDoBlocks(), // TODO(#158667): unskip this.
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -386,7 +385,7 @@ func runOneRoundQueryComparison(
 				// Initialize a new mutating smither that generates INSERT, UPDATE and
 				// DELETE statements with the MutationsOnly option.
 				mutatingSmither = newMutatingSmither(conn, rnd, t, false /* disableDelete */, qct.isMultiRegion)
-				defer mutatingSmither.Close() //nolint:deferloop
+				defer mutatingSmither.Close()
 			}
 
 			if i%numInitialMutations == 0 {
@@ -412,7 +411,7 @@ func runOneRoundQueryComparison(
 			// state of the database.
 			if i < numInitialMutations || i%25 == 0 {
 				mConn, mConnInfo := h.chooseConn()
-				runMutationStatement(t, mConn, mConnInfo, mutatingSmither, logStmt)
+				runMutationStatement(mConn, mConnInfo, mutatingSmither, logStmt)
 				continue
 			}
 

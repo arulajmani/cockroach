@@ -10,13 +10,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/pprof"
 	"strings"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/server/dumpstore"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
-	"github.com/cockroachdb/cockroach/pkg/util/allstacks"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
@@ -94,7 +94,7 @@ func (gd *GoroutineDumper) MaybeDump(ctx context.Context, st *cluster.Settings, 
 			)
 			path := gd.store.GetFullPath(filename)
 			if err := gd.takeGoroutineDump(path); err != nil {
-				log.Dev.Warningf(ctx, "error dumping goroutines: %s", err)
+				log.Warningf(ctx, "error dumping goroutines: %s", err)
 				continue
 			}
 			gd.maxGoroutinesDumped = goroutines
@@ -114,7 +114,7 @@ func NewGoroutineDumper(
 		return nil, errors.New("directory to store dumps could not be determined")
 	}
 
-	log.Dev.Infof(ctx, "writing goroutine dumps to %s", log.SafeManaged(dir))
+	log.Infof(ctx, "writing goroutine dumps to %s", log.SafeManaged(dir))
 
 	gd := &GoroutineDumper{
 		heuristics: []heuristic{
@@ -136,7 +136,7 @@ func (gd *GoroutineDumper) gcDumps(ctx context.Context, now time.Time) {
 
 // PreFilter is part of the dumpstore.Dumper interface.
 func (gd *GoroutineDumper) PreFilter(
-	ctx context.Context, files []os.DirEntry, cleanupFn func(fileName string) error,
+	ctx context.Context, files []os.FileInfo, cleanupFn func(fileName string) error,
 ) (preserved map[int]bool, _ error) {
 	preserved = make(map[int]bool)
 	for i := len(files) - 1; i >= 0; i-- {
@@ -150,7 +150,7 @@ func (gd *GoroutineDumper) PreFilter(
 }
 
 // CheckOwnsFile is part of the dumpstore.Dumper interface.
-func (gd *GoroutineDumper) CheckOwnsFile(_ context.Context, fi os.DirEntry) bool {
+func (gd *GoroutineDumper) CheckOwnsFile(_ context.Context, fi os.FileInfo) bool {
 	return strings.HasPrefix(fi.Name(), goroutineDumpPrefix)
 }
 
@@ -162,7 +162,7 @@ func takeGoroutineDump(path string) error {
 	}
 	defer f.Close()
 	w := gzip.NewWriter(f)
-	if _, err := w.Write(allstacks.Get()); err != nil {
+	if err = pprof.Lookup("goroutine").WriteTo(w, 2); err != nil {
 		return errors.Wrapf(err, "error writing goroutine dump to %s", path)
 	}
 	// Flush and write the gzip header. It doesn't close the underlying writer.
