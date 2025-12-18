@@ -21,12 +21,9 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/cloud"
 	"github.com/cockroachdb/cockroach/pkg/crosscluster"
 	"github.com/cockroachdb/cockroach/pkg/kv"
-	"github.com/cockroachdb/cockroach/pkg/kv/bulk"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/security/username"
-	"github.com/cockroachdb/cockroach/pkg/settings"
-	"github.com/cockroachdb/cockroach/pkg/sql/bulksst"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/tabledesc"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/typedesc"
@@ -47,50 +44,33 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
-var importElasticCPUControlEnabled = settings.RegisterBoolSetting(
-	settings.ApplicationLevel,
-	"bulkio.import.elastic_control.enabled",
-	"determines whether import operations integrate with elastic CPU control",
-	false, // TODO(dt): enable this by default after more benchmarking.
-)
-
-func getTableFromSpec(
-	spec *execinfrapb.ReadImportDataSpec,
-) *execinfrapb.ReadImportDataSpec_ImportTable {
-	if len(spec.Tables) > 0 {
-		for _, t := range spec.Tables {
-			return t
-		}
-	}
-	return spec.Table
-}
-
 func runImport(
 	ctx context.Context,
 	flowCtx *execinfra.FlowCtx,
 	spec *execinfrapb.ReadImportDataSpec,
 	progCh chan execinfrapb.RemoteProducerMetadata_BulkProcessorProgress,
 	seqChunkProvider *row.SeqChunkProvider,
-) (*kvpb.BulkOpSummary, *bulksst.SSTFiles, error) {
+) (*kvpb.BulkOpSummary, error) {
 	// Used to send ingested import rows to the KV layer.
 	kvCh := make(chan row.KVBatch, 10)
 
-	// Install type metadata in the import table.
+	// Install type metadata in all of the import tables.
 	spec = protoutil.Clone(spec).(*execinfrapb.ReadImportDataSpec)
 	importResolver := crosscluster.MakeCrossClusterTypeResolver(spec.Types)
-	table := getTableFromSpec(spec)
-	cpy := tabledesc.NewBuilder(table.Desc).BuildCreatedMutableTable()
-	if err := typedesc.HydrateTypesInDescriptor(ctx, cpy, importResolver); err != nil {
-		return nil, nil, err
+	for _, table := range spec.Tables {
+		cpy := tabledesc.NewBuilder(table.Desc).BuildCreatedMutableTable()
+		if err := typedesc.HydrateTypesInDescriptor(ctx, cpy, importResolver); err != nil {
+			return nil, err
+		}
+		table.Desc = cpy.TableDesc()
 	}
-	table.Desc = cpy.TableDesc()
 
 	evalCtx := flowCtx.NewEvalCtx()
 	evalCtx.Regions = makeImportRegionOperator(spec.DatabasePrimaryRegion)
 	semaCtx := tree.MakeSemaContext(importResolver)
 	conv, err := makeInputConverter(ctx, &semaCtx, spec, evalCtx, kvCh, seqChunkProvider, flowCtx.Cfg.DB.KV())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// This group holds the go routines that are responsible for producing KV
@@ -122,14 +102,13 @@ func runImport(
 	// Ingest the KVs that the producer group emitted to the chan and the row result
 	// at the end is one row containing an encoded BulkOpSummary.
 	var summary *kvpb.BulkOpSummary
-	var files *bulksst.SSTFiles
 	group.GoCtx(func(ctx context.Context) error {
-		summary, files, err = ingestKvs(ctx, flowCtx, spec, table.Desc.Name, progCh, kvCh)
+		summary, err = ingestKvs(ctx, flowCtx, spec, progCh, kvCh)
 		return err
 	})
 
 	if err = group.Wait(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	var prog execinfrapb.RemoteProducerMetadata_BulkProcessorProgress
@@ -141,71 +120,10 @@ func runImport(
 	}
 	select {
 	case <-ctx.Done():
-		return nil, nil, ctx.Err()
+		return nil, ctx.Err()
 	case progCh <- prog:
-		return summary, files, nil
+		return summary, nil
 	}
-}
-
-// makeFileReader creates a fileReader for the given format, applying
-// decompression for formats that need it (CSV, Avro, etc.) or providing
-// seekable access for formats that require it (Parquet).
-func makeFileReader(
-	ctx context.Context,
-	format roachpb.IOFileFormat,
-	raw ioctx.ReadCloserCtx,
-	dataFile string,
-	dataFileSize int64,
-	storage cloud.ExternalStorage,
-) (*fileReader, io.Closer, error) {
-	var readCloser io.ReadCloser
-	var randomReader ioctx.ReaderAtSeekerCloser
-	var counter *byteCounter
-
-	switch format.Format {
-	case roachpb.IOFileFormat_Parquet:
-		// Parquet needs seekable, uncompressed access
-		// (compression is handled internally by Parquet)
-		if storage == nil {
-			// This shouldn't really happen, makeExternalStorage would have returned an error.
-			return nil, nil, errors.AssertionFailedf("storage must be non-nil for Parquet format")
-		}
-		// This works with any cloud storage that supports offset reads.
-		openAt := func(ctx context.Context, offset int64, endHint int64) (ioctx.ReadCloserCtx, error) {
-			opts := cloud.ReadOptions{
-				Offset: offset,
-			}
-			// Set LengthHint if endHint is provided and valid.
-			if endHint > offset {
-				opts.LengthHint = endHint - offset
-			}
-			r, _, err := storage.ReadFile(ctx, "", opts)
-			return r, err
-		}
-		randomReader = ioctx.NewRandomAccessReader(ctx, dataFileSize, openAt)
-		readCloser = randomReader
-		// counter = nil, since it is not very useful for random access files;
-		// we track progress on the rows read within a parquet file.
-	default:
-		// Default sequential access.
-		source := ioctx.ReaderCtxAdapter(ctx, raw)
-		counter = &byteCounter{r: source}
-		// Apply decompression wrapper
-		decompressed, err := decompressingReader(counter, dataFile, format.Compression)
-		if err != nil {
-			return nil, nil, err
-		}
-		readCloser = decompressed
-		// randomReader = nil, it is not used for sequential access.
-	}
-
-	return &fileReader{
-		Reader:   readCloser,
-		ReaderAt: randomReader, // nil for sequential access.
-		Seeker:   randomReader, // nil for sequential access.
-		counter:  counter,      // nil for parquet.
-		total:    dataFileSize,
-	}, readCloser, nil
 }
 
 // readInputFiles reads each of the passed dataFiles using the passed func. The
@@ -250,7 +168,7 @@ func readInputFiles(
 
 			if sz <= 0 {
 				// Don't log dataFile here because it could leak auth information.
-				log.Dev.Infof(ctx, "could not fetch file size; falling back to per-file progress: %v", err)
+				log.Infof(ctx, "could not fetch file size; falling back to per-file progress: %v", err)
 			} else {
 				fileSizes[id] = sz
 			}
@@ -299,18 +217,19 @@ func readInputFiles(
 				return err
 			}
 			defer es.Close()
-
 			raw, _, err := es.ReadFile(ctx, "", cloud.ReadOptions{NoFileSize: true})
 			if err != nil {
 				return err
 			}
 			defer raw.Close(ctx)
-			// Create fileReader with format-specific handling
-			src, closer, err := makeFileReader(ctx, format, raw, dataFile, fileSizes[dataFileIndex], es)
+
+			src := &fileReader{total: fileSizes[dataFileIndex], counter: byteCounter{r: ioctx.ReaderCtxAdapter(ctx, raw)}}
+			decompressed, err := decompressingReader(&src.counter, dataFile, format.Compression)
 			if err != nil {
 				return err
 			}
-			defer closer.Close()
+			defer decompressed.Close()
+			src.Reader = decompressed
 
 			var rejected chan string
 			if (format.Format == roachpb.IOFileFormat_CSV && format.SaveRejected) ||
@@ -435,28 +354,14 @@ func (b *byteCounter) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// fileReader wraps cloud storage readers to provide io.Reader, io.ReaderAt, and io.Seeker
-// interfaces along with progress tracking.
-//
-// Thread Safety:
-// The fileReader provides different thread safety guarantees for different methods:
-//   - ReadAt: Safe for concurrent calls. Multiple goroutines can call ReadAt simultaneously.
-//     This may be used by formats like Parquet that read different file sections in parallel.
-//   - Read/Seek: NOT safe for concurrent calls. Should only be used from a single goroutine.
-//
-// Usage patterns:
-// - Sequential formats (CSV, Avro, etc.): Single goroutine uses Read/Seek
-// - Random-access formats (Parquet): Multiple goroutines could call ReadAt; Seek only during initialization
 type fileReader struct {
 	io.Reader
-	io.ReaderAt
-	io.Seeker
 	total   int64
-	counter *byteCounter
+	counter byteCounter
 }
 
 func (f fileReader) ReadFraction() float32 {
-	if f.total == 0 || f.counter == nil {
+	if f.total == 0 {
 		return 0.0
 	}
 	return float32(f.counter.n) / float32(f.total)
@@ -472,8 +377,6 @@ type inputConverter interface {
 func formatHasNamedColumns(format roachpb.IOFileFormat_FileFormat) bool {
 	switch format {
 	case roachpb.IOFileFormat_Avro:
-		return true
-	case roachpb.IOFileFormat_Parquet:
 		return true
 	}
 	return false
@@ -536,7 +439,7 @@ type importFileContext struct {
 // handleCorruptRow reports an error encountered while processing a row
 // in an input file.
 func handleCorruptRow(ctx context.Context, fileCtx *importFileContext, err error) error {
-	log.Dev.Errorf(ctx, "%+v", err)
+	log.Errorf(ctx, "%+v", err)
 
 	if rowErr := (*importRowError)(nil); errors.As(err, &rowErr) && fileCtx.rejected != nil {
 		fileCtx.rejected <- rowErr.row + "\n"
@@ -664,17 +567,9 @@ func runParallelImport(
 		var span *tracing.Span
 		ctx, span = tracing.ChildSpan(ctx, "import-file-to-rows")
 		defer span.Finish()
-
-		// Create a pacer for admission control for the producer.
-		pacer := bulk.NewCPUPacer(ctx, importCtx.db, importElasticCPUControlEnabled)
-		defer pacer.Close()
-
 		var numSkipped int64
 		var count int64
 		for producer.Scan() {
-			if _, err := pacer.Pace(ctx); err != nil {
-				return err
-			}
 			// Skip rows if needed.
 			count++
 			if count <= fileCtx.skip {
@@ -765,10 +660,6 @@ func (p *parallelImporter) importWorker(
 	fileCtx *importFileContext,
 	minEmitted []int64,
 ) error {
-	// Create a pacer for admission control for this worker.
-	pacer := bulk.NewCPUPacer(ctx, importCtx.db, importElasticCPUControlEnabled)
-	defer pacer.Close()
-
 	conv, err := makeDatumConverter(ctx, importCtx, fileCtx, importCtx.db)
 	if err != nil {
 		return err
@@ -789,11 +680,6 @@ func (p *parallelImporter) importWorker(
 		conv.KvBatch.Progress = batch.progress
 		for batchIdx, record := range batch.data {
 			rowNum = batch.startPos + int64(batchIdx)
-			// Pace the admission control before processing each row.
-			if _, err := pacer.Pace(ctx); err != nil {
-				return err
-			}
-
 			if err := consumer.FillDatums(ctx, record, rowNum, conv); err != nil {
 				if err = handleCorruptRow(ctx, fileCtx, err); err != nil {
 					return err

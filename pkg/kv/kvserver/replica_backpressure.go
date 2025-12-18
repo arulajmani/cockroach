@@ -88,11 +88,9 @@ var backpressureByteTolerance = settings.RegisterByteSizeSetting(
 // to be backpressured.
 var backpressurableSpans = []roachpb.Span{
 	{Key: keys.TimeseriesPrefix, EndKey: keys.TimeseriesKeyMax},
-	// Exclude the span_configurations table to avoid
-	// catch-22 situations where protected timestamp updates or garbage
-	// collection TTL updates are blocked by backpressure.
-	{Key: keys.SystemConfigTableDataMax, EndKey: keys.SpanConfigTableMin},
-	{Key: keys.SpanConfigTableMax, EndKey: keys.TableDataMax},
+	// Backpressure from the end of the system config forward instead of
+	// over all table data to avoid backpressuring unsplittable ranges.
+	{Key: keys.SystemConfigTableDataMax, EndKey: keys.TableDataMax},
 }
 
 // canBackpressureBatch returns whether the provided BatchRequest is eligible
@@ -203,7 +201,7 @@ func (r *Replica) maybeBackpressureBatch(ctx context.Context, ba *kvpb.BatchRequ
 			defer r.store.metrics.BackpressuredOnSplitRequests.Dec(1) //nolint:deferloop
 
 			if backpressureLogLimiter.ShouldLog() {
-				log.KvExec.Warningf(ctx, "applying backpressure to limit range growth on batch %s", ba)
+				log.Warningf(ctx, "applying backpressure to limit range growth on batch %s", ba)
 			}
 		}
 
