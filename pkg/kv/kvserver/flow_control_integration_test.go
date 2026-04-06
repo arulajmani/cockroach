@@ -2386,6 +2386,7 @@ func TestFlowControlSendQueueRangeRelocate(t *testing.T) {
 
 			disableWorkQueueGrantingServers := make([]atomic.Bool, numNodes)
 			setTokenReturnEnabled := func(enabled bool, serverIdxs ...int) {
+				fmt.Printf("DBGFLAKE: setTokenReturnEnabled enabled=%t serverIdxs=%v\n", enabled, serverIdxs)
 				for _, serverIdx := range serverIdxs {
 					disableWorkQueueGrantingServers[serverIdx].Store(!enabled)
 				}
@@ -2419,7 +2420,11 @@ func TestFlowControlSendQueueRangeRelocate(t *testing.T) {
 							DisableWorkQueueFastPath: true,
 							DisableWorkQueueGranting: func() bool {
 								idx := i
-								return disableWorkQueueGrantingServers[idx].Load()
+								val := disableWorkQueueGrantingServers[idx].Load()
+								if val {
+									fmt.Printf("DBGFLAKE: DisableWorkQueueGranting closure idx=%d returning true\n", idx)
+								}
+								return val
 							},
 						},
 					},

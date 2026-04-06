@@ -1111,10 +1111,8 @@ func (p *processorImpl) AdmitForEval(
 	}()
 	if rc == nil {
 		workClass := admissionpb.WorkClassFromPri(pri)
-		if log.ExpensiveLogEnabled(ctx, 2) {
-			log.VEventf(ctx, 2, "r%v/%v bypassed request as no RC (pri=%v)",
-				p.opts.RangeID, p.opts.ReplicaID, pri)
-		}
+		log.Dev.Infof(ctx, "DBGFLAKE: r%v/%v AdmitForEval rc==nil, bypassing flow control (pri=%v)",
+			p.opts.RangeID, p.opts.ReplicaID, pri)
 		p.opts.EvalWaitMetrics.OnWaiting(workClass)
 		p.opts.EvalWaitMetrics.OnBypassed(workClass, 0 /* duration */)
 		return false, nil

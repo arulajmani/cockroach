@@ -2429,14 +2429,23 @@ func (ds *DistSender) sendPartialBatch(
 	//
 	// See the documentation for the function
 	// (*EvictionToken).RandomizeLeaseholder() for an explanation.
-	if ctx.Err() != nil && routingTok.Valid() &&
-		routingTok.SinceLeaseholderContacted() >= randomizeLeaseholderOnContextErrorDuration {
-
-		ds.metrics.LeaseholderRandomizedOnContextErrorCount.Inc(1)
-		log.VEventf(ctx, 1,
-			"cached descriptor %s that last contacted leaseholder %s ago saw context error, randomizing the leaseholder",
-			routingTok.Desc(), routingTok.SinceLeaseholderContacted())
-		routingTok.RandomizeLeaseholder(ctx)
+	if ctx.Err() != nil && routingTok.Valid() {
+		sinceContacted := routingTok.SinceLeaseholderContacted()
+		log.Dev.Infof(ctx,
+			"DBGFLAKE: sendToReplicas exit ctx.Err=%v desc=%s leaseholder=%v sinceContacted=%s threshold=%s willRandomize=%t",
+			ctx.Err(), routingTok.Desc(), routingTok.Leaseholder(), sinceContacted,
+			randomizeLeaseholderOnContextErrorDuration,
+			sinceContacted >= randomizeLeaseholderOnContextErrorDuration)
+		if sinceContacted >= randomizeLeaseholderOnContextErrorDuration {
+			ds.metrics.LeaseholderRandomizedOnContextErrorCount.Inc(1)
+			log.Dev.Infof(ctx,
+				"DBGFLAKE: RANDOMIZING leaseholder for %s (was %v)",
+				routingTok.Desc(), routingTok.Leaseholder())
+			routingTok.RandomizeLeaseholder(ctx)
+			log.Dev.Infof(ctx,
+				"DBGFLAKE: RANDOMIZED leaseholder for %s (now %v)",
+				routingTok.Desc(), routingTok.Leaseholder())
+		}
 	}
 
 	return response{pErr: pErr}
@@ -2705,6 +2714,9 @@ func (ds *DistSender) sendToReplicas(
 				replicas.MoveToFront(idx)
 			}
 			routeToLeaseholder = true
+			log.Dev.Infof(ctx,
+				"DBGFLAKE: sendToReplicas r%d routing to leaseholder %v (idx=%d, replicas=%v)",
+				desc.RangeID, routing.Leaseholder(), idx, replicas)
 		} else {
 			// The leaseholder node's info must have been missing from gossip when we
 			// created replicas.

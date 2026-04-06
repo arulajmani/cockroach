@@ -791,6 +791,9 @@ func (sg *kvStoreTokenGranter) tryGrantLockedOne() bool {
 				if tookTokenCount == 0 {
 					// Did not accept grant.
 					sg.returnGrantLocked(1, wt)
+					log.Dev.Infof(context.Background(),
+						"DBGFLAKE: tryGrantLockedOne wt=%d granted returned 0 (DisableWorkQueueGranting likely blocking)",
+						wt)
 					// Continue with the loop since this requester does not have waiting
 					// requests. If the loop terminates we will correctly return
 					// grantFailLocal.

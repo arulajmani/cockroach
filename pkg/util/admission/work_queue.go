@@ -1149,6 +1149,8 @@ func (q *WorkQueue) granted(grantChainID grantChainID) int64 {
 	}
 	if fn := q.knobs.DisableWorkQueueGranting; fn != nil && fn() {
 		q.mu.Unlock()
+		log.Dev.Infof(context.Background(), "DBGFLAKE: %s granted() blocked by DisableWorkQueueGranting, tenantHeap len=%d",
+			q.workKind, len(q.mu.tenantHeap)+1)
 		return 0
 	}
 	tenant := q.mu.tenantHeap[0]

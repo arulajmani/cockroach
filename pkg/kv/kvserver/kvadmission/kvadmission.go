@@ -323,6 +323,8 @@ func (n *controllerImpl) AdmitKVWork(
 		if attemptFlowControl && !admissionInfo.BypassAdmission {
 			kvflowHandle, found := n.kvflowHandles.LookupReplicationAdmissionHandle(ba.RangeID)
 			if !found {
+				log.Dev.Infof(ctx, "DBGFLAKE: r%d flow control handle not found, bypassing flow control",
+					ba.RangeID)
 				return Handle{}, nil
 			}
 			var err error
@@ -356,6 +358,9 @@ func (n *controllerImpl) AdmitKVWork(
 		// If flow control is disabled or if work bypasses flow control, we still
 		// subject it above-raft, leaseholder-only IO admission control.
 		if !attemptFlowControl || !admitted {
+			log.Dev.Infof(ctx,
+				"DBGFLAKE: r%d falling through to store admission (attemptFlowControl=%t admitted=%t bypass=%t storeID=s%d)",
+				ba.RangeID, attemptFlowControl, admitted, admissionInfo.BypassAdmission, ba.Replica.StoreID)
 			storeAdmissionQ := n.storeGrantCoords.TryGetQueueForStore(ba.Replica.StoreID)
 			if storeAdmissionQ != nil {
 				//  NB: Even though we would know here we're bypassing admission (via
